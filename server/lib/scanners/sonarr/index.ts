@@ -30,6 +30,7 @@ class SonarrScanner
   extends BaseScanner<SonarrSeries>
   implements RunnableScanner<SyncStatus>
 {
+  protected declineRequestsOnStatusReset = true;
   private servers: SonarrSettings[];
   private currentServer: SonarrSettings;
   private sonarrApi: SonarrAPI;

@@ -69,6 +69,8 @@ class BaseScanner<T> {
   protected enable4kShow = false;
   protected sessionId: string;
   protected running = false;
+  // Only the *arr scanners know whether a title is still being pursued.
+  protected declineRequestsOnStatusReset = false;
   readonly asyncLock = new AsyncLock();
   readonly tmdb = new TheMovieDb();
 
@@ -120,6 +122,7 @@ class BaseScanner<T> {
 
       if (existing) {
         let changedExisting = false;
+        let resetToUnknown = false;
 
         if (existing[is4k ? 'status4k' : 'status'] !== MediaStatus.AVAILABLE) {
           const statusField = is4k ? 'status4k' : 'status';
@@ -143,6 +146,9 @@ class BaseScanner<T> {
               existing.mediaAddedAt = mediaAddedAt;
             }
             changedExisting = true;
+            resetToUnknown =
+              previousStatus === MediaStatus.PROCESSING &&
+              existing[statusField] === MediaStatus.UNKNOWN;
           }
         }
 
@@ -208,6 +214,10 @@ class BaseScanner<T> {
             `Media for ${title} exists. Changes were detected and the title will be updated.`,
             'info'
           );
+
+          if (resetToUnknown && this.declineRequestsOnStatusReset) {
+            await this.declineRequestsForReset(existing.id, is4k);
+          }
         } else {
           this.log(`Title already exists and no changes detected for ${title}`);
         }
@@ -512,6 +522,9 @@ class BaseScanner<T> {
           seasons4kForRollup.length > 0 &&
           seasons4kForRollup.every((s) => s.status4k === MediaStatus.AVAILABLE);
 
+        const previousStatus = media.status;
+        const previousStatus4k = media.status4k;
+
         media.status = isAllStandardSeasonsAvailable
           ? MediaStatus.AVAILABLE
           : media.seasons.some(
@@ -548,6 +561,22 @@ class BaseScanner<T> {
                   : MediaStatus.UNKNOWN;
         await mediaRepository.save(media);
         this.log(`Updating existing title: ${title}`);
+
+        if (this.declineRequestsOnStatusReset) {
+          if (
+            previousStatus === MediaStatus.PROCESSING &&
+            media.status === MediaStatus.UNKNOWN
+          ) {
+            await this.declineRequestsForReset(media.id, false);
+          }
+
+          if (
+            previousStatus4k === MediaStatus.PROCESSING &&
+            media.status4k === MediaStatus.UNKNOWN
+          ) {
+            await this.declineRequestsForReset(media.id, true);
+          }
+        }
       } else {
         // For new media, check actual newSeasons objects instead of scanner
         // input to determine overall availability status
@@ -656,7 +685,8 @@ class BaseScanner<T> {
    */
   protected async declineOrphanedRequests(
     media: Media,
-    is4k: boolean
+    is4k: boolean,
+    reason = 'not found in any Sonarr/Radarr server'
   ): Promise<void> {
     if (media.requests === undefined) {
       throw new Error(
@@ -680,8 +710,27 @@ class BaseScanner<T> {
       this.log(
         `Declined orphaned ${
           media.mediaType === MediaType.MOVIE ? 'movie' : 'series'
-        } request ${request.id} for ${media.tmdbId} not found in any Sonarr/Radarr server.`,
+        } request ${request.id} for ${media.tmdbId} ${reason}.`,
         'info'
+      );
+    }
+  }
+
+  // getExisting omits the requests relation; not worth joining on every scan.
+  protected async declineRequestsForReset(
+    mediaId: number,
+    is4k: boolean
+  ): Promise<void> {
+    const media = await getRepository(Media).findOne({
+      where: { id: mediaId },
+      relations: { requests: true },
+    });
+
+    if (media) {
+      await this.declineOrphanedRequests(
+        media,
+        is4k,
+        'reset to UNKNOWN after the Sonarr/Radarr entry went unmonitored with nothing downloaded'
       );
     }
   }

@@ -21,6 +21,7 @@ class RadarrScanner
   extends BaseScanner<RadarrMovie>
   implements RunnableScanner<SyncStatus>
 {
+  protected declineRequestsOnStatusReset = true;
   private servers: RadarrSettings[];
   private currentServer: RadarrSettings;
   private radarrApi: RadarrAPI;
