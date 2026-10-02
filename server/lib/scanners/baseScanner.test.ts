@@ -29,10 +29,27 @@ class HarnessScanner extends BaseScanner<unknown> {
     }
   }
 
-  public scanShow(tmdbId: number, seasons: ProcessableSeason[]): Promise<void> {
-    return this.processShow(tmdbId, undefined, seasons, {
+  public async scanShow(
+    tmdbId: number,
+    seasons: ProcessableSeason[]
+  ): Promise<void> {
+    await this.processShow(tmdbId, undefined, seasons, {
       title: 'Test Show',
     });
+    await this.resolve();
+  }
+
+  public scanAbandonedMovie(tmdbId: number): Promise<void> {
+    return this.processMovie(tmdbId, {
+      title: 'Test Movie',
+      processing: false,
+      hasFile: false,
+    });
+  }
+
+  // Most permissive resolver possible, so a survivor means nothing was recorded.
+  public resolve(): Promise<void> {
+    return this.resolveStatusResets(() => true);
   }
 }
 
@@ -92,6 +109,39 @@ async function seedInFlightShow(tmdbId: number): Promise<MediaRequest> {
   );
 }
 
+async function seedInFlightMovie(tmdbId: number): Promise<MediaRequest> {
+  const mediaRepository = getRepository(Media);
+  const requestRepository = getRepository(MediaRequest);
+  const userRepository = getRepository(User);
+
+  const requestedBy = await userRepository.findOneOrFail({ where: { id: 1 } });
+
+  const media = await mediaRepository.save(
+    new Media({
+      tmdbId,
+      mediaType: MediaType.MOVIE,
+      status: MediaStatus.PROCESSING,
+      status4k: MediaStatus.UNKNOWN,
+    })
+  );
+
+  // sendToRadarr runs on insert and only bails when no server is configured,
+  // so leftover settings from another test would reach TMDB and fail the request.
+  const settings = getSettings();
+  settings.radarr = [];
+  settings.sonarr = [];
+
+  return requestRepository.save(
+    new MediaRequest({
+      type: MediaType.MOVIE,
+      status: MediaRequestStatus.APPROVED,
+      media,
+      requestedBy,
+      is4k: false,
+    })
+  );
+}
+
 describe('BaseScanner', () => {
   describe('declineRequestsOnStatusReset gate', () => {
     it('leaves the request alone for a scanner that has not opted in', async () => {
@@ -117,6 +167,50 @@ describe('BaseScanner', () => {
         where: { id: request.id },
       });
 
+      assert.strictEqual(updated.status, MediaRequestStatus.DECLINED);
+    });
+
+    it('resets a movie in the loop for a scanner that has not opted in', async () => {
+      const mediaRepository = getRepository(Media);
+      const requestRepository = getRepository(MediaRequest);
+      const request = await seedInFlightMovie(7003);
+
+      await new HarnessScanner().scanAbandonedMovie(7003);
+
+      const media = await mediaRepository.findOneOrFail({
+        where: { tmdbId: 7003 },
+      });
+      const updated = await requestRepository.findOneOrFail({
+        where: { id: request.id },
+      });
+
+      assert.strictEqual(media.status, MediaStatus.UNKNOWN);
+      assert.strictEqual(updated.status, MediaRequestStatus.APPROVED);
+    });
+
+    it('defers a movie reset to the resolve pass for a scanner that has opted in', async () => {
+      const mediaRepository = getRepository(Media);
+      const requestRepository = getRepository(MediaRequest);
+      const request = await seedInFlightMovie(7004);
+      const scanner = new HarnessScanner(true);
+
+      await scanner.scanAbandonedMovie(7004);
+
+      const duringScan = await mediaRepository.findOneOrFail({
+        where: { tmdbId: 7004 },
+      });
+      assert.strictEqual(duringScan.status, MediaStatus.PROCESSING);
+
+      await scanner.resolve();
+
+      const afterResolve = await mediaRepository.findOneOrFail({
+        where: { tmdbId: 7004 },
+      });
+      const updated = await requestRepository.findOneOrFail({
+        where: { id: request.id },
+      });
+
+      assert.strictEqual(afterResolve.status, MediaStatus.UNKNOWN);
       assert.strictEqual(updated.status, MediaRequestStatus.DECLINED);
     });
   });

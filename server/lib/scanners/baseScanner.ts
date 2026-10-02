@@ -71,6 +71,10 @@ class BaseScanner<T> {
   protected running = false;
   // Only the *arr scanners know whether a title is still being pursued.
   protected declineRequestsOnStatusReset = false;
+  private statusResetCandidates = new Map<
+    string,
+    { mediaId: number; is4k: boolean }
+  >();
   readonly asyncLock = new AsyncLock();
   readonly tmdb = new TheMovieDb();
 
@@ -122,18 +126,24 @@ class BaseScanner<T> {
 
       if (existing) {
         let changedExisting = false;
-        let resetToUnknown = false;
+        const statusField = is4k ? 'status4k' : 'status';
+        const previousStatus = existing[statusField];
+        const abandonedEntry = !processing && !hasFile;
+        // One server cannot speak for the others; settled after the whole run.
+        const deferredReset =
+          this.declineRequestsOnStatusReset &&
+          abandonedEntry &&
+          previousStatus === MediaStatus.PROCESSING;
 
-        if (existing[is4k ? 'status4k' : 'status'] !== MediaStatus.AVAILABLE) {
-          const statusField = is4k ? 'status4k' : 'status';
-          const previousStatus = existing[statusField];
+        if (deferredReset) {
+          this.recordStatusReset(existing.id, is4k);
+        }
 
+        if (previousStatus !== MediaStatus.AVAILABLE && !deferredReset) {
           existing[statusField] =
             !processing && hasFile
               ? MediaStatus.AVAILABLE
-              : !processing &&
-                  !hasFile &&
-                  previousStatus === MediaStatus.PROCESSING
+              : abandonedEntry && previousStatus === MediaStatus.PROCESSING
                 ? MediaStatus.UNKNOWN
                 : processing
                   ? previousStatus === MediaStatus.DELETED
@@ -146,9 +156,6 @@ class BaseScanner<T> {
               existing.mediaAddedAt = mediaAddedAt;
             }
             changedExisting = true;
-            resetToUnknown =
-              previousStatus === MediaStatus.PROCESSING &&
-              existing[statusField] === MediaStatus.UNKNOWN;
           }
         }
 
@@ -180,32 +187,35 @@ class BaseScanner<T> {
           changedExisting = true;
         }
 
-        if (
-          serviceId !== undefined &&
-          existing[is4k ? 'serviceId4k' : 'serviceId'] !== serviceId
-        ) {
-          existing[is4k ? 'serviceId4k' : 'serviceId'] = serviceId;
-          changedExisting = true;
-        }
+        // Letting an abandoned entry claim these would make them scan-order dependent.
+        if (!deferredReset) {
+          if (
+            serviceId !== undefined &&
+            existing[is4k ? 'serviceId4k' : 'serviceId'] !== serviceId
+          ) {
+            existing[is4k ? 'serviceId4k' : 'serviceId'] = serviceId;
+            changedExisting = true;
+          }
 
-        if (
-          externalServiceId !== undefined &&
-          existing[is4k ? 'externalServiceId4k' : 'externalServiceId'] !==
-            externalServiceId
-        ) {
-          existing[is4k ? 'externalServiceId4k' : 'externalServiceId'] =
-            externalServiceId;
-          changedExisting = true;
-        }
+          if (
+            externalServiceId !== undefined &&
+            existing[is4k ? 'externalServiceId4k' : 'externalServiceId'] !==
+              externalServiceId
+          ) {
+            existing[is4k ? 'externalServiceId4k' : 'externalServiceId'] =
+              externalServiceId;
+            changedExisting = true;
+          }
 
-        if (
-          externalServiceSlug !== undefined &&
-          existing[is4k ? 'externalServiceSlug4k' : 'externalServiceSlug'] !==
-            externalServiceSlug
-        ) {
-          existing[is4k ? 'externalServiceSlug4k' : 'externalServiceSlug'] =
-            externalServiceSlug;
-          changedExisting = true;
+          if (
+            externalServiceSlug !== undefined &&
+            existing[is4k ? 'externalServiceSlug4k' : 'externalServiceSlug'] !==
+              externalServiceSlug
+          ) {
+            existing[is4k ? 'externalServiceSlug4k' : 'externalServiceSlug'] =
+              externalServiceSlug;
+            changedExisting = true;
+          }
         }
 
         if (changedExisting) {
@@ -214,10 +224,6 @@ class BaseScanner<T> {
             `Media for ${title} exists. Changes were detected and the title will be updated.`,
             'info'
           );
-
-          if (resetToUnknown && this.declineRequestsOnStatusReset) {
-            await this.declineRequestsForReset(existing.id, is4k);
-          }
         } else {
           this.log(`Title already exists and no changes detected for ${title}`);
         }
@@ -562,20 +568,18 @@ class BaseScanner<T> {
         await mediaRepository.save(media);
         this.log(`Updating existing title: ${title}`);
 
-        if (this.declineRequestsOnStatusReset) {
-          if (
-            previousStatus === MediaStatus.PROCESSING &&
-            media.status === MediaStatus.UNKNOWN
-          ) {
-            await this.declineRequestsForReset(media.id, false);
-          }
+        if (
+          previousStatus === MediaStatus.PROCESSING &&
+          media.status === MediaStatus.UNKNOWN
+        ) {
+          this.recordStatusReset(media.id, false);
+        }
 
-          if (
-            previousStatus4k === MediaStatus.PROCESSING &&
-            media.status4k === MediaStatus.UNKNOWN
-          ) {
-            await this.declineRequestsForReset(media.id, true);
-          }
+        if (
+          previousStatus4k === MediaStatus.PROCESSING &&
+          media.status4k === MediaStatus.UNKNOWN
+        ) {
+          this.recordStatusReset(media.id, true);
         }
       } else {
         // For new media, check actual newSeasons objects instead of scanner
@@ -716,17 +720,40 @@ class BaseScanner<T> {
     }
   }
 
-  // getExisting omits the requests relation; not worth joining on every scan.
-  protected async declineRequestsForReset(
-    mediaId: number,
-    is4k: boolean
-  ): Promise<void> {
-    const media = await getRepository(Media).findOne({
-      where: { id: mediaId },
-      relations: { requests: true },
-    });
+  private recordStatusReset(mediaId: number, is4k: boolean): void {
+    if (!this.declineRequestsOnStatusReset) {
+      return;
+    }
 
-    if (media) {
+    this.statusResetCandidates.set(`${mediaId}:${is4k}`, { mediaId, is4k });
+  }
+
+  // Runs once the caller can answer for every server, not just the current one.
+  protected async resolveStatusResets(
+    isAbandoned: (media: Media, is4k: boolean) => boolean
+  ): Promise<void> {
+    const mediaRepository = getRepository(Media);
+
+    for (const { mediaId, is4k } of this.statusResetCandidates.values()) {
+      const media = await mediaRepository.findOne({
+        where: { id: mediaId },
+        relations: { requests: true },
+      });
+
+      if (!media || !isAbandoned(media, is4k)) {
+        continue;
+      }
+
+      const statusField = is4k ? 'status4k' : 'status';
+
+      if (media[statusField] === MediaStatus.PROCESSING) {
+        media[statusField] = MediaStatus.UNKNOWN;
+        await mediaRepository.save(media);
+      } else if (media[statusField] !== MediaStatus.UNKNOWN) {
+        // Something finished or deleted it mid-run; it is no longer ours to reset.
+        continue;
+      }
+
       await this.declineOrphanedRequests(
         media,
         is4k,
@@ -745,6 +772,7 @@ class BaseScanner<T> {
     const settings = getSettings();
     const sessionId = randomUUID();
     this.sessionId = sessionId;
+    this.statusResetCandidates.clear();
 
     this.log('Scan starting', 'info', { sessionId });
 
