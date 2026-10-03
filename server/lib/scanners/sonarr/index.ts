@@ -39,6 +39,10 @@ class SonarrScanner
   // Season numbers keyed on tmdbId, as media.tvdbId can be null. Excludes unmonitored seasons.
   private processingSeasons: Map<number, Set<number>> = new Map();
   private processing4kSeasons: Map<number, Set<number>> = new Map();
+  // A lookup can fail before its tmdbId is known, so failures are matched through other servers' lookups.
+  private failedTvdbIds: Set<number> = new Set();
+  private failed4kTvdbIds: Set<number> = new Set();
+  private tmdbIdsByTvdbId: Map<number, number> = new Map();
   private didScanStandard = false;
   private didScan4k = false;
   private serverReturnedEmpty = false;
@@ -65,6 +69,9 @@ class SonarrScanner
     this.scanned4kTvdbIds.clear();
     this.processingSeasons.clear();
     this.processing4kSeasons.clear();
+    this.failedTvdbIds.clear();
+    this.failed4kTvdbIds.clear();
+    this.tmdbIdsByTvdbId.clear();
     this.didScanStandard = false;
     this.didScan4k = false;
     this.serverReturnedEmpty = false;
@@ -146,12 +153,16 @@ class SonarrScanner
 
       await this.resolveStatusResets((media, is4k, seasonNumber) => {
         const scanComplete = is4k ? this.didScan4k : this.didScanStandard;
+        const failedToScan = [
+          ...(is4k ? this.failed4kTvdbIds : this.failedTvdbIds),
+        ].some((tvdbId) => this.tmdbIdsByTvdbId.get(tvdbId) === media.tmdbId);
         const processingSeasons = (
           is4k ? this.processing4kSeasons : this.processingSeasons
         ).get(media.tmdbId);
 
         return (
           scanComplete &&
+          !failedToScan &&
           (seasonNumber === undefined
             ? !processingSeasons
             : !processingSeasons?.has(seasonNumber))
@@ -193,6 +204,8 @@ class SonarrScanner
       }
 
       const tmdbId = tvShow.id;
+      this.tmdbIdsByTvdbId.set(sonarrSeries.tvdbId, tmdbId);
+
       const metadataProvider = tvShow.keywords.results.some(
         (keyword: TmdbKeyword) => keyword.id === ANIME_KEYWORD_ID
       )
@@ -264,6 +277,9 @@ class SonarrScanner
         is4k: server4k,
       });
     } catch (e) {
+      (server4k ? this.failed4kTvdbIds : this.failedTvdbIds).add(
+        sonarrSeries.tvdbId
+      );
       this.log('Failed to process Sonarr media', 'error', {
         errorMessage: e.message,
         title: sonarrSeries.title,
