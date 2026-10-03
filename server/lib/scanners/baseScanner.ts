@@ -521,22 +521,33 @@ class BaseScanner<T> {
           media.mediaAddedAt = mediaAddedAt;
         }
 
-        if (serviceId !== undefined) {
-          media[is4k ? 'serviceId4k' : 'serviceId'] = serviceId;
-        }
-
-        if (externalServiceId !== undefined) {
-          media[is4k ? 'externalServiceId4k' : 'externalServiceId'] =
-            externalServiceId;
-        }
-
-        if (externalServiceSlug !== undefined) {
-          media[is4k ? 'externalServiceSlug4k' : 'externalServiceSlug'] =
-            externalServiceSlug;
-        }
-
         const previousStatus = media.status;
         const previousStatus4k = media.status4k;
+        const abandonedEntry =
+          this.declineRequestsOnStatusReset &&
+          (is4k ? previousStatus4k : previousStatus) ===
+            MediaStatus.PROCESSING &&
+          !seasons.some(
+            (season) =>
+              season.processing || season[is4k ? 'episodes4k' : 'episodes'] > 0
+          );
+
+        // Letting an abandoned entry claim these would make them scan-order dependent.
+        if (!abandonedEntry) {
+          if (serviceId !== undefined) {
+            media[is4k ? 'serviceId4k' : 'serviceId'] = serviceId;
+          }
+
+          if (externalServiceId !== undefined) {
+            media[is4k ? 'externalServiceId4k' : 'externalServiceId'] =
+              externalServiceId;
+          }
+
+          if (externalServiceSlug !== undefined) {
+            media[is4k ? 'externalServiceSlug4k' : 'externalServiceSlug'] =
+              externalServiceSlug;
+          }
+        }
 
         media.status = this.rollUpShowStatus(media, seasons, false);
         media.status4k = this.rollUpShowStatus(media, seasons, true);
