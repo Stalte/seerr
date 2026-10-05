@@ -356,6 +356,26 @@ components:
         - machineId
         - ip
         - port
+    PlexSecondarySettings:
+      type: object
+      properties:
+        name:
+          type: string
+          example: 'Second Server'
+        machineId:
+          type: string
+          nullable: true
+          example: '1234123412341234'
+        ownerUsername:
+          type: string
+          nullable: true
+          example: 'secondowner'
+        ownerConnected:
+          type: boolean
+          example: true
+      required:
+        - name
+        - ownerConnected
     PlexConnection:
       type: object
       properties:
@@ -2514,6 +2534,98 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PlexSettings'
+  /settings/plex/secondary:
+    get:
+      summary: Get secondary Plex server settings
+      description: Returns the secondary Plex server whose users may also sign in. The owner's token is never returned.
+      tags:
+        - settings
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlexSecondarySettings'
+    post:
+      summary: Select the secondary Plex server
+      description: Selects one of the secondary owner's Plex servers by machine identifier.
+      tags:
+        - settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                machineId:
+                  type: string
+              required:
+                - machineId
+      responses:
+        '200':
+          description: Secondary server saved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlexSecondarySettings'
+    delete:
+      summary: Remove the secondary Plex server
+      description: Clears the secondary Plex server and its owner's token.
+      tags:
+        - settings
+      responses:
+        '200':
+          description: Secondary server removed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlexSecondarySettings'
+  /settings/plex/secondary/owner:
+    post:
+      summary: Connect the secondary Plex server owner
+      description: Stores the Plex token of the account that owns the secondary server.
+      tags:
+        - settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                authToken:
+                  type: string
+              required:
+                - authToken
+      responses:
+        '200':
+          description: Owner connected
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlexSecondarySettings'
+  /settings/plex/secondary/servers:
+    get:
+      summary: List the secondary owner's Plex servers
+      description: Returns the Plex servers owned by the connected secondary owner account.
+      tags:
+        - settings
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                    machineId:
+                      type: string
   /settings/plex/library:
     get:
       summary: Get Plex libraries

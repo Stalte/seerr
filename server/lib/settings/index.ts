@@ -44,6 +44,18 @@ export interface PlexSettings {
   webAppUrl?: string;
 }
 
+/**
+ * A second Plex server, owned by a different Plex account, whose users may
+ * also sign in. It shares the main server's media, so it is never scanned.
+ */
+export interface PlexSecondarySettings {
+  name: string;
+  machineId?: string;
+  ownerPlexId?: number;
+  ownerUsername?: string;
+  ownerToken?: string;
+}
+
 export interface JellyfinSettings {
   name: string;
   ip: string;
@@ -381,6 +393,7 @@ export interface AllSettings {
   vapidPrivate: string;
   main: MainSettings;
   plex: PlexSettings;
+  plexSecondary: PlexSecondarySettings;
   jellyfin: JellyfinSettings;
   tautulli: TautulliSettings;
   radarr: RadarrSettings[];
@@ -443,6 +456,9 @@ class Settings {
         port: 32400,
         useSsl: false,
         libraries: [],
+      },
+      plexSecondary: {
+        name: '',
       },
       jellyfin: {
         name: '',
@@ -657,6 +673,14 @@ class Settings {
 
   set plex(data: PlexSettings) {
     this.data.plex = mergeSettings(this.data.plex, data);
+  }
+
+  get plexSecondary(): PlexSecondarySettings {
+    return this.data.plexSecondary;
+  }
+
+  set plexSecondary(data: PlexSecondarySettings) {
+    this.data.plexSecondary = data;
   }
 
   get jellyfin(): JellyfinSettings {

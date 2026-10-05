@@ -6,6 +6,7 @@ import PageTitle from '@app/components/Common/PageTitle';
 import SensitiveInput from '@app/components/Common/SensitiveInput';
 import LibraryItem from '@app/components/Settings/LibraryItem';
 import SettingsBadge from '@app/components/Settings/SettingsBadge';
+import SettingsPlexSecondary from '@app/components/Settings/SettingsPlexSecondary';
 import useToasts from '@app/hooks/useToasts';
 import globalMessages from '@app/i18n/globalMessages';
 import defineMessages from '@app/utils/defineMessages';
@@ -634,6 +635,7 @@ const SettingsPlex = ({ isSetupSettings }: SettingsPlexProps) => {
           );
         }}
       </Formik>
+      {!isSetupSettings && <SettingsPlexSecondary />}
       <div className="mb-6 mt-10">
         <h3 className="heading">
           {intl.formatMessage(messages.plexlibraries)}

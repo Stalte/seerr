@@ -83,17 +83,19 @@ interface ServerResponse {
   };
 }
 
+export interface PlexSharedUser {
+  id: string;
+  title: string;
+  username: string;
+  email: string;
+  thumb: string;
+}
+
 interface UsersResponse {
   MediaContainer: {
-    User: {
-      $: {
-        id: string;
-        title: string;
-        username: string;
-        email: string;
-        thumb: string;
-      };
-      Server: ServerResponse[];
+    User?: {
+      $: PlexSharedUser;
+      Server?: ServerResponse[];
     }[];
   };
 }
@@ -259,17 +261,18 @@ class PlexTvAPI extends ExternalAPI {
     }
   }
 
-  public async checkUserAccess(userId: number): Promise<boolean> {
-    const settings = getSettings();
-
+  public async checkUserAccess(
+    userId: number,
+    machineId = getSettings().plex.machineId
+  ): Promise<boolean> {
     try {
-      if (!settings.plex.machineId) {
+      if (!machineId) {
         throw new Error('Plex is not configured!');
       }
 
       const usersResponse = await this.getUsers();
 
-      const users = usersResponse.MediaContainer.User;
+      const users = usersResponse.MediaContainer.User ?? [];
 
       const user = users.find((u) => parseInt(u.$.id) === userId);
 
@@ -280,12 +283,31 @@ class PlexTvAPI extends ExternalAPI {
       }
 
       return !!user.Server?.find(
-        (server) => server.$.machineIdentifier === settings.plex.machineId
+        (server) => server.$.machineIdentifier === machineId
       );
     } catch (e) {
       logger.error(`Error checking user access: ${e.message}`);
       return false;
     }
+  }
+
+  /**
+   * Returns every user on this account's shared list, flagged with whether
+   * they have been shared the server with the given machine identifier.
+   */
+  public async getUsersWithAccess(
+    machineId?: string
+  ): Promise<{ user: PlexSharedUser; hasAccess: boolean }[]> {
+    const usersResponse = await this.getUsers();
+
+    return (usersResponse.MediaContainer.User ?? []).map((user) => ({
+      user: user.$,
+      hasAccess:
+        !!machineId &&
+        !!user.Server?.some(
+          (server) => server.$.machineIdentifier === machineId
+        ),
+    }));
   }
 
   public async getUsers(): Promise<UsersResponse> {
