@@ -1,5 +1,6 @@
 import logger from '@server/logger';
 import type { AxiosResponse } from 'axios';
+import type { HistoryRecord } from './base';
 import ServarrBase from './base';
 
 export interface RadarrMovieOptions {
@@ -286,6 +287,72 @@ class RadarrAPI extends ServarrBase<{ movieId: number }> {
       );
     }
   }
+  public getMovieHistory = async (
+    movieId: number
+  ): Promise<HistoryRecord[]> => {
+    try {
+      const response = await this.axios.get<HistoryRecord[]>('/history/movie', {
+        params: { movieId },
+      });
+
+      return response.data;
+    } catch (e) {
+      throw new Error(`[Radarr] Failed to retrieve history: ${e.message}`, {
+        cause: e,
+      });
+    }
+  };
+
+  public getMovieQueue = async (
+    movieId: number
+  ): Promise<{ id: number; movieId: number }[]> => {
+    try {
+      const response = await this.axios.get<{ id: number; movieId: number }[]>(
+        '/queue/details',
+        { params: { movieId } }
+      );
+
+      return response.data;
+    } catch (e) {
+      throw new Error(`[Radarr] Failed to retrieve queue: ${e.message}`, {
+        cause: e,
+      });
+    }
+  };
+
+  public deleteMovieFile = async (movieFileId: number): Promise<void> => {
+    try {
+      await this.axios.delete(`/moviefile/${movieFileId}`);
+    } catch (e) {
+      if (e?.response?.status === 404) {
+        return;
+      }
+      throw new Error(`[Radarr] Failed to delete movie file: ${e.message}`, {
+        cause: e,
+      });
+    }
+  };
+
+  public setMovieMonitored = async (movie: RadarrMovie): Promise<void> => {
+    try {
+      await this.axios.put(`/movie/${movie.id}`, {
+        ...movie,
+        monitored: true,
+      });
+    } catch (e) {
+      throw new Error(`[Radarr] Failed to monitor movie: ${e.message}`, {
+        cause: e,
+      });
+    }
+  };
+
+  /**
+   * Starts a search and throws if Radarr refuses it.
+   */
+  public startMovieSearch = async (movieId: number): Promise<void> => {
+    await this.runCommand('MoviesSearch', { movieIds: [movieId] });
+  };
+
   public removeMovie = async (tmdbId: number): Promise<void> => {
     const { id, title } = await this.getMovieByTmdbId(tmdbId);
 

@@ -2093,6 +2093,10 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/IssueComment'
+        retryStatus:
+          type: string
+          nullable: true
+          enum: [deleted, searching, downloading, added, failed, null]
     IssueComment:
       type: object
       properties:
@@ -8119,6 +8123,69 @@ paths:
       responses:
         '204':
           description: Succesfully removed issue comment
+  /issue/{issueId}/retry:
+    get:
+      summary: Get the copies of an issue's media that can be deleted and retried
+      description: |
+        Returns which copies (standard, 4k, dub) Radarr or Sonarr has for the issue's media.
+
+        Requires the `RETRY_ISSUE_MEDIA` permission on the user's own issue, or `MANAGE_ISSUES`.
+      tags:
+        - issue
+      parameters:
+        - in: path
+          name: issueId
+          description: Issue ID
+          required: true
+          schema:
+            type: string
+            example: '1'
+      responses:
+        '200':
+          description: Retry targets
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  targets:
+                    type: array
+                    items:
+                      type: string
+                      enum: [standard, 4k, dub]
+    post:
+      summary: Delete an issue's media and search again
+      description: |
+        Only for a movie or a single episode. Deletes the file in Radarr or Sonarr, blocklists the release that was on disk and starts a new search. Progress is reported in the issue's `retryStatus`.
+
+        Requires the `RETRY_ISSUE_MEDIA` permission on the user's own issue, or `MANAGE_ISSUES`.
+      tags:
+        - issue
+      parameters:
+        - in: path
+          name: issueId
+          description: Issue ID
+          required: true
+          schema:
+            type: string
+            example: '1'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                target:
+                  type: string
+                  enum: [standard, 4k, dub]
+      responses:
+        '200':
+          description: Media deleted and a new search started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Issue'
   /issue/{issueId}/{status}:
     post:
       summary: Update an issue's status

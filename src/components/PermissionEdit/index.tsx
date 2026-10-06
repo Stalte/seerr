@@ -72,6 +72,9 @@ export const messages = defineMessages('components.PermissionEdit', {
   viewissues: 'View Issues',
   viewissuesDescription:
     'Grant permission to view media issues reported by other users.',
+  retryissuemedia: 'Delete Media and Retry',
+  retryissuemediaDescription:
+    'Grant permission to delete the movie or episode of an issue the user reported, block the downloaded release and search for a new one. Whole seasons cannot be deleted.',
   viewrecent: 'View Recently Added',
   viewrecentDescription:
     'Grant permission to view the list of recently added media.',
@@ -336,6 +339,12 @@ export const PermissionEdit = ({
           name: intl.formatMessage(messages.viewissues),
           description: intl.formatMessage(messages.viewissuesDescription),
           permission: Permission.VIEW_ISSUES,
+        },
+        {
+          id: 'retryissuemedia',
+          name: intl.formatMessage(messages.retryissuemedia),
+          description: intl.formatMessage(messages.retryissuemediaDescription),
+          permission: Permission.RETRY_ISSUE_MEDIA,
         },
       ],
     },
