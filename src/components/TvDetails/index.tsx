@@ -75,6 +75,8 @@ import { useIntl } from 'react-intl';
 import useSWR from 'swr';
 
 const messages = defineMessages('components.TvDetails', {
+  dubAvailable: 'English Dub',
+  dubPartiallyAvailable: 'English Dub Partially Available',
   firstAirDate: 'First Air Date',
   nextAirDate: 'Next Air Date',
   originallanguage: 'Original Language',
@@ -308,7 +310,23 @@ const TvDetails = ({ tv }: TvDetailsProps) => {
       )
       .map((season) => season.seasonNumber);
 
-    return getTakenSeasons(activeRequests, availableSeasons, animeAudio);
+    // Dub availability is only recorded for the non-4K tier
+    const availableDubSeasons = is4k
+      ? []
+      : (data?.mediaInfo?.seasons ?? [])
+          .filter(
+            (season) =>
+              season.statusDub === MediaStatus.AVAILABLE ||
+              season.statusDub === MediaStatus.PARTIALLY_AVAILABLE
+          )
+          .map((season) => season.seasonNumber);
+
+    return getTakenSeasons(
+      activeRequests,
+      availableSeasons,
+      animeAudio,
+      availableDubSeasons
+    );
   };
 
   // Mirrors the season list the request modal offers, so the two agree.
@@ -609,6 +627,18 @@ const TvDetails = ({ tv }: TvDetailsProps) => {
                   plexUrl={plexUrl4k}
                   serviceUrl={data.mediaInfo?.serviceUrl4k}
                 />
+              )}
+            {isAnime &&
+              (data.mediaInfo?.statusDub === MediaStatus.AVAILABLE ||
+                data.mediaInfo?.statusDub ===
+                  MediaStatus.PARTIALLY_AVAILABLE) && (
+                <Badge badgeType="success">
+                  {intl.formatMessage(
+                    data.mediaInfo.statusDub === MediaStatus.AVAILABLE
+                      ? messages.dubAvailable
+                      : messages.dubPartiallyAvailable
+                  )}
+                </Badge>
               )}
           </div>
           <h1 data-testid="media-title">

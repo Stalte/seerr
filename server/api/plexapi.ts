@@ -159,6 +159,8 @@ class PlexAPI extends ExternalAPI {
             enabled: existing?.enabled ?? false,
             type: library.type,
             lastScan: existing?.lastScan,
+            animeAudio:
+              library.type === 'show' ? existing?.animeAudio : undefined,
           };
         });
 

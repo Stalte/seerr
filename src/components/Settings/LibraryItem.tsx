@@ -1,17 +1,65 @@
+import defineMessages from '@app/utils/defineMessages';
 import { CheckIcon, XMarkIcon } from '@heroicons/react/24/solid';
+import { useIntl } from 'react-intl';
+
+const messages = defineMessages('components.Settings.LibraryItem', {
+  animeAudio: 'Anime',
+  notAnime: 'Not Anime',
+  animeSub: 'Anime (Subbed)',
+  animeDub: 'Anime (Dubbed)',
+});
+
+type LibraryAnimeAudio = 'sub' | 'dub';
 
 interface LibraryItemProps {
   isEnabled?: boolean;
   name: string;
   onToggle: () => void;
+  animeAudio?: LibraryAnimeAudio;
+  // Shown only when given, for Plex show libraries
+  onAnimeAudioChange?: (animeAudio: LibraryAnimeAudio | null) => void;
 }
 
-const LibraryItem = ({ isEnabled, name, onToggle }: LibraryItemProps) => {
+const LibraryItem = ({
+  isEnabled,
+  name,
+  onToggle,
+  animeAudio,
+  onAnimeAudioChange,
+}: LibraryItemProps) => {
+  const intl = useIntl();
+
   return (
     <li className="col-span-1 flex rounded-md shadow-sm">
       <div className="flex flex-1 items-center justify-between truncate rounded-md border-b border-r border-t border-gray-700 bg-gray-600">
-        <div className="flex-1 cursor-default truncate px-4 py-6 text-sm leading-5">
+        <div
+          className={`flex-1 cursor-default truncate px-4 text-sm leading-5 ${
+            onAnimeAudioChange ? 'py-3' : 'py-6'
+          }`}
+        >
           {name}
+          {onAnimeAudioChange && (
+            <select
+              aria-label={intl.formatMessage(messages.animeAudio)}
+              className="mt-2 block w-full py-1 text-xs"
+              value={animeAudio ?? ''}
+              onChange={(e) =>
+                onAnimeAudioChange(
+                  e.target.value === ''
+                    ? null
+                    : (e.target.value as LibraryAnimeAudio)
+                )
+              }
+            >
+              <option value="">{intl.formatMessage(messages.notAnime)}</option>
+              <option value="sub">
+                {intl.formatMessage(messages.animeSub)}
+              </option>
+              <option value="dub">
+                {intl.formatMessage(messages.animeDub)}
+              </option>
+            </select>
+          )}
         </div>
         <div className="flex-shrink-0 pr-2">
           <span

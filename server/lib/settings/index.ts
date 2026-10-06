@@ -20,6 +20,9 @@ export interface Library {
   enabled: boolean;
   type: 'show' | 'movie';
   lastScan?: number;
+  // Marks a Plex show library as holding one version of anime. A 'dub'
+  // library only records English dub availability, never the original's.
+  animeAudio?: 'sub' | 'dub';
 }
 
 export interface Region {

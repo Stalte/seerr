@@ -558,7 +558,7 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
           }
         }
 
-        const dubSettings = wantsDub
+        let dubSettings = wantsDub
           ? findAnimeDubSonarr(settings.sonarr, entity.is4k)
           : undefined;
 
@@ -584,12 +584,16 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
           throw new Error('Media data not found');
         }
 
-        // Availability only tracks the original-language version, since the
-        // dubbed library is not scanned, so it never completes a dub request
-        if (
-          media[entity.is4k ? 'status4k' : 'status'] === MediaStatus.AVAILABLE
-        ) {
-          if (!wantsDub) {
+        // Each version is skipped once Plex has it. Dub availability is only
+        // recorded for non-4K, from a Plex library marked as dubbed.
+        const subAvailable =
+          wantsSub &&
+          media[entity.is4k ? 'status4k' : 'status'] === MediaStatus.AVAILABLE;
+        const dubAvailable =
+          wantsDub && !entity.is4k && media.statusDub === MediaStatus.AVAILABLE;
+
+        if (subAvailable || dubAvailable) {
+          if ((!wantsSub || subAvailable) && (!wantsDub || dubAvailable)) {
             logger.warn('Media already exists, marking request as COMPLETED', {
               label: 'Media Request',
               requestId: entity.id,
@@ -605,7 +609,13 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
             return;
           }
 
-          sonarrSettings = undefined;
+          if (subAvailable) {
+            sonarrSettings = undefined;
+          }
+
+          if (dubAvailable) {
+            dubSettings = undefined;
+          }
         }
 
         const tmdb = new TheMovieDb();

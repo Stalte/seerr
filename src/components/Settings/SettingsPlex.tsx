@@ -54,6 +54,8 @@ const messages = defineMessages('components.Settings', {
   port: 'Port',
   enablessl: 'Use SSL',
   plexlibraries: 'Plex Libraries',
+  plexlibrariesAnimeDescription:
+    'Mark a show library as subbed or dubbed anime. A dubbed library only records which series have an English dub, so it never marks the original-language version as available. Run a full scan after changing this.',
   plexlibrariesDescription:
     'The libraries Seerr scans for titles. Set up and save your Plex connection settings, then click the button below if no libraries are listed.',
   scanning: 'Syncing…',
@@ -321,6 +323,26 @@ const SettingsPlex = ({ isSetupSettings }: SettingsPlexProps) => {
       cancel: true,
     });
     revalidateSync();
+  };
+
+  const setLibraryAnimeAudio = async (
+    libraryId: string,
+    animeAudio: 'sub' | 'dub' | null
+  ) => {
+    setIsSyncing(true);
+    try {
+      await axios.put(`/api/v1/settings/plex/library/${libraryId}`, {
+        animeAudio,
+      });
+    } catch {
+      addToast(intl.formatMessage(messages.toggleLibraryFailure), {
+        autoDismiss: true,
+        appearance: 'error',
+      });
+    } finally {
+      setIsSyncing(false);
+      revalidate();
+    }
   };
 
   const toggleLibrary = async (libraryId: string) => {
@@ -643,6 +665,9 @@ const SettingsPlex = ({ isSetupSettings }: SettingsPlexProps) => {
         <p className="description">
           {intl.formatMessage(messages.plexlibrariesDescription)}
         </p>
+        <p className="description">
+          {intl.formatMessage(messages.plexlibrariesAnimeDescription)}
+        </p>
       </div>
       <div className="section">
         <Button
@@ -666,6 +691,12 @@ const SettingsPlex = ({ isSetupSettings }: SettingsPlexProps) => {
               isEnabled={library.enabled}
               key={`setting-library-${library.id}`}
               onToggle={() => toggleLibrary(library.id)}
+              animeAudio={library.animeAudio}
+              onAnimeAudioChange={
+                library.type === 'show'
+                  ? (animeAudio) => setLibraryAnimeAudio(library.id, animeAudio)
+                  : undefined
+              }
             />
           ))}
         </ul>

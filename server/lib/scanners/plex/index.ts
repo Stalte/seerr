@@ -210,6 +210,14 @@ class PlexScanner
 
   private async processItem(plexitem: PlexLibraryItem) {
     try {
+      // A dubbed anime library only tracks the dub of series
+      if (
+        this.currentLibrary?.animeAudio === 'dub' &&
+        plexitem.type === 'movie'
+      ) {
+        return;
+      }
+
       if (plexitem.type === 'movie') {
         await this.processPlexMovie(plexitem);
       } else if (
@@ -304,6 +312,11 @@ class PlexScanner
     });
 
     const mediaIds = await this.getMediaIds(metadata);
+    const isDubLibrary = this.currentLibrary?.animeAudio === 'dub';
+
+    if (isDubLibrary && !mediaIds.tvdbId && mediaIds.isHama) {
+      return;
+    }
 
     // If the media is from HAMA, and doesn't have a TVDb ID, we will treat it
     // as a special HAMA movie
@@ -314,7 +327,7 @@ class PlexScanner
 
     // If the media is from HAMA and we have a TVDb ID, we will attempt
     // to process any specials that may exist
-    if (mediaIds.tvdbId && mediaIds.isHama) {
+    if (mediaIds.tvdbId && mediaIds.isHama && !isDubLibrary) {
       await this.processHamaSpecials(metadata, mediaIds.tvdbId);
     }
 
@@ -356,7 +369,8 @@ class PlexScanner
 
         processableSeasons.push({
           seasonNumber: season.season_number,
-          episodes: totalStandard,
+          // Resolution does not matter for the dub, every copy counts
+          episodes: isDubLibrary ? episodes.length : totalStandard,
           episodes4k: total4k,
           totalEpisodes: season.episode_count,
         });
@@ -368,6 +382,16 @@ class PlexScanner
           totalEpisodes: season.episode_count,
         });
       }
+    }
+
+    if (isDubLibrary) {
+      await this.processDubShow(
+        mediaIds.tmdbId,
+        mediaIds.tvdbId ?? tvShow.external_ids.tvdb_id,
+        processableSeasons,
+        { title: metadata.title }
+      );
+      return;
     }
 
     await this.processShow(
