@@ -65,7 +65,10 @@ class SonarrScanner
     this.server4kReturnedEmpty = false;
 
     try {
-      this.servers = uniqWith(settings.sonarr, (sonarrA, sonarrB) => {
+      // The dubs-only server holds second copies of anime, and availability
+      // only tracks the original-language version
+      const servers = settings.sonarr.filter((server) => !server.isAnimeDub);
+      this.servers = uniqWith(servers, (sonarrA, sonarrB) => {
         return (
           sonarrA.hostname === sonarrB.hostname &&
           sonarrA.port === sonarrB.port &&

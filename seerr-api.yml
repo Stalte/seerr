@@ -705,6 +705,10 @@ components:
         preventSearch:
           type: boolean
           example: false
+        isAnimeDub:
+          type: boolean
+          example: false
+          description: If true, this server only receives the English dub side of anime requests and is never used as a default server.
       required:
         - name
         - hostname
@@ -1297,6 +1301,11 @@ components:
           type: boolean
           example: false
           description: If true, this request will not count against the user's quota. Requires MANAGE_REQUESTS permission.
+        animeAudio:
+          type: string
+          enum: [sub, dub, both]
+          nullable: true
+          description: For anime series, whether the original language with subtitles, the English dub, or both were requested.
       required:
         - id
         - status
@@ -6727,6 +6736,10 @@ paths:
                   type: boolean
                   example: false
                   description: If true, this request will not count against the user's quota. Requires MANAGE_REQUESTS permission.
+                animeAudio:
+                  type: string
+                  enum: [sub, dub, both]
+                  description: For anime series when a dubs-only Sonarr server is configured. 'sub' goes to the regular Sonarr server, 'dub' to the dubs-only one, 'both' to each.
               required:
                 - mediaType
                 - mediaId
