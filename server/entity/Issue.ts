@@ -1,5 +1,6 @@
 import type { IssueType } from '@server/constants/issue';
 import { IssueStatus } from '@server/constants/issue';
+import type { IssueRetryData, IssueRetryStatus } from '@server/lib/issueRetry';
 import { DbAwareColumn, resolveDbType } from '@server/utils/DbColumnHelper';
 import {
   AfterLoad,
@@ -60,6 +61,13 @@ class Issue {
     eager: true,
   })
   public comments: IssueComment[];
+
+  // Progress of "Delete media and retry", shown to the reporting user
+  @Column({ type: 'varchar', nullable: true })
+  public retryStatus?: IssueRetryStatus | null;
+
+  @Column({ type: 'simple-json', nullable: true })
+  public retryData?: IssueRetryData | null;
 
   @DbAwareColumn({ type: 'datetime', default: () => 'CURRENT_TIMESTAMP' })
   public createdAt: Date;

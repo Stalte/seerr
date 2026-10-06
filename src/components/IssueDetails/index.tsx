@@ -6,6 +6,7 @@ import Modal from '@app/components/Common/Modal';
 import PageTitle from '@app/components/Common/PageTitle';
 import IssueComment from '@app/components/IssueDetails/IssueComment';
 import IssueDescription from '@app/components/IssueDetails/IssueDescription';
+import IssueRetry from '@app/components/IssueDetails/IssueRetry';
 import { issueOptions } from '@app/components/IssueModal/constants';
 import useDeepLinks from '@app/hooks/useDeepLinks';
 import useSettings from '@app/hooks/useSettings';
@@ -317,6 +318,14 @@ const IssueDetails = () => {
               editFirstComment(newMessage);
             }}
             onDelete={() => setShowDeleteModal(true)}
+          />
+          <IssueRetry
+            issue={issueData}
+            canRetry={
+              hasPermission(Permission.MANAGE_ISSUES) ||
+              (belongsToUser && hasPermission(Permission.RETRY_ISSUE_MEDIA))
+            }
+            onUpdate={revalidateIssue}
           />
           <div className="mt-8 lg:hidden">
             <div className="media-facts">

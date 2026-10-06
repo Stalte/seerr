@@ -8,6 +8,11 @@ import type {
   IssueRequestBody,
   IssueResultsResponse,
 } from '@server/interfaces/api/issueInterfaces';
+import {
+  getRetryTargets,
+  isIssueRetryTarget,
+  retryIssueMedia,
+} from '@server/lib/issueRetry';
 import { Permission } from '@server/lib/permissions';
 import logger from '@server/logger';
 import { isAuthenticated } from '@server/middleware/auth';
@@ -274,6 +279,86 @@ issueRoutes.get<{ issueId: string }>(
       });
       next({ status: 500, message: 'Issue not found.' });
     }
+  }
+);
+
+const findRetryIssue = async (
+  issueId: string,
+  user: User
+): Promise<Issue | { status: number; message: string }> => {
+  const issue = await getRepository(Issue).findOne({
+    where: { id: Number(issueId) },
+  });
+
+  if (!issue) {
+    return { status: 404, message: 'Issue not found.' };
+  }
+
+  // Only the reporting user, or someone who manages issues, may delete
+  if (
+    issue.createdBy.id !== user.id &&
+    !user.hasPermission(Permission.MANAGE_ISSUES)
+  ) {
+    return {
+      status: 403,
+      message: 'You do not have permission to delete the media of this issue.',
+    };
+  }
+
+  return issue;
+};
+
+issueRoutes.get<{ issueId: string }>(
+  '/:issueId/retry',
+  isAuthenticated([Permission.MANAGE_ISSUES, Permission.RETRY_ISSUE_MEDIA], {
+    type: 'or',
+  }),
+  async (req, res, next) => {
+    if (!req.user) {
+      return next({ status: 500, message: 'User missing from request.' });
+    }
+
+    const issue = await findRetryIssue(req.params.issueId, req.user);
+    if (!(issue instanceof Issue)) {
+      return next(issue);
+    }
+
+    const targets = await getRetryTargets(issue.media);
+
+    return res.status(200).json({ targets });
+  }
+);
+
+issueRoutes.post<{ issueId: string }, Issue, { target?: string }>(
+  '/:issueId/retry',
+  isAuthenticated([Permission.MANAGE_ISSUES, Permission.RETRY_ISSUE_MEDIA], {
+    type: 'or',
+  }),
+  async (req, res, next) => {
+    if (!req.user) {
+      return next({ status: 500, message: 'User missing from request.' });
+    }
+
+    const target = req.body.target ?? 'standard';
+    if (!isIssueRetryTarget(target)) {
+      return next({ status: 400, message: 'Invalid target.' });
+    }
+
+    const issue = await findRetryIssue(req.params.issueId, req.user);
+    if (!(issue instanceof Issue)) {
+      return next(issue);
+    }
+
+    try {
+      await retryIssueMedia(issue, target);
+    } catch (e) {
+      return next({
+        status: 500,
+        message: `Could not delete the media and search again: ${e.message}`,
+      });
+    }
+
+    return res.status(200).json(issue);
   }
 );
 

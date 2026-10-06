@@ -69,6 +69,20 @@ export interface Tag {
   label: string;
 }
 
+/**
+ * A history record. `eventType` is a name such as `grabbed` or
+ * `downloadFolderImported`, and `downloadId` ties an import back to its grab.
+ */
+export interface HistoryRecord {
+  id: number;
+  eventType: string;
+  date: string;
+  sourceTitle?: string;
+  downloadId?: string;
+  episodeId?: number;
+  movieId?: number;
+}
+
 interface QueueResponse<QueueItemAppendT> {
   page: number;
   pageSize: number;
@@ -226,6 +240,20 @@ class ServarrBase<QueueItemAppendT> extends ExternalAPI {
       throw new Error(`[${this.apiName}] Failed to rename tag: ${e.message}`, {
         cause: e,
       });
+    }
+  };
+
+  /**
+   * Marks a grabbed release as failed, which adds it to the blocklist.
+   */
+  public markHistoryFailed = async (historyId: number): Promise<void> => {
+    try {
+      await this.axios.post(`/history/failed/${historyId}`);
+    } catch (e) {
+      throw new Error(
+        `[${this.apiName}] Failed to mark release as failed: ${e.message}`,
+        { cause: e }
+      );
     }
   };
 
