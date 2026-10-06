@@ -24,6 +24,10 @@ class Season {
   @Column({ type: 'int', default: MediaStatus.UNKNOWN })
   public status4k: MediaStatus;
 
+  // English dub availability of anime, from Plex libraries marked as dubbed
+  @Column({ type: 'int', default: MediaStatus.UNKNOWN })
+  public statusDub: MediaStatus;
+
   @ManyToOne(() => Media, (media) => media.seasons, {
     onDelete: 'CASCADE',
   })

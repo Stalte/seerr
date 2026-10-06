@@ -19,6 +19,7 @@ import type { AvailableCacheIds } from '@server/lib/cache';
 import cacheManager from '@server/lib/cache';
 import ImageProxy from '@server/lib/imageproxy';
 import { Permission } from '@server/lib/permissions';
+import { getPlexSharedUsers } from '@server/lib/plexServers';
 import { jellyfinFullScanner } from '@server/lib/scanners/jellyfin';
 import { plexFullScanner } from '@server/lib/scanners/plex';
 import type { JobId, Library, MainSettings } from '@server/lib/settings';
@@ -43,6 +44,7 @@ import { URL } from 'url';
 import { z } from 'zod';
 import metadataRoutes from './metadata';
 import notificationRoutes from './notifications';
+import plexSecondaryRoutes from './plexSecondary';
 import radarrRoutes from './radarr';
 import sonarrRoutes from './sonarr';
 
@@ -53,10 +55,22 @@ settingsRoutes.use('/radarr', radarrRoutes);
 settingsRoutes.use('/sonarr', sonarrRoutes);
 settingsRoutes.use('/discover', discoverSettingRoutes);
 settingsRoutes.use('/metadatas', metadataRoutes);
+settingsRoutes.use('/plex/secondary', plexSecondaryRoutes);
 
 const libraryUpdateSchema = z.object({
   enabled: z.boolean(),
 });
+
+const plexLibraryUpdateSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    // null clears the tag
+    animeAudio: z.enum(['sub', 'dub']).nullable().optional(),
+  })
+  .refine(
+    (body) => body.enabled !== undefined || body.animeAudio !== undefined,
+    { message: 'Nothing to update.' }
+  );
 
 const filteredMainSettings = (
   user: User,
@@ -244,7 +258,7 @@ settingsRoutes.get('/plex/library', (_req, res) => {
 settingsRoutes.put('/plex/library/:libraryId', async (req, res, next) => {
   const settings = getSettings();
 
-  const bodyResult = libraryUpdateSchema.safeParse(req.body);
+  const bodyResult = plexLibraryUpdateSchema.safeParse(req.body);
 
   if (!bodyResult.success) {
     return next({ status: 400, message: 'Invalid request body.' });
@@ -258,7 +272,25 @@ settingsRoutes.put('/plex/library/:libraryId', async (req, res, next) => {
     return next({ status: 404, message: 'Library does not exist.' });
   }
 
-  library.enabled = bodyResult.data.enabled;
+  if (bodyResult.data.animeAudio !== undefined) {
+    if (library.type !== 'show') {
+      return next({
+        status: 400,
+        message: 'Only show libraries can hold anime.',
+      });
+    }
+
+    if (bodyResult.data.animeAudio === null) {
+      delete library.animeAudio;
+    } else {
+      library.animeAudio = bodyResult.data.animeAudio;
+    }
+  }
+
+  if (bodyResult.data.enabled !== undefined) {
+    library.enabled = bodyResult.data.enabled;
+  }
+
   await settings.save();
 
   return res.status(200).json(library);
@@ -543,10 +575,11 @@ settingsRoutes.get(
         select: { id: true, plexToken: true },
         where: { id: 1 },
       });
-      const plexApi = new PlexTvAPI(admin.plexToken ?? '');
-      const plexUsers = (await plexApi.getUsers()).MediaContainer.User.map(
-        (user) => user.$
-      ).filter((user) => user.email);
+      // Includes users of the secondary Plex server, when one is configured
+      const sharedUsers = await getPlexSharedUsers(admin.plexToken ?? '');
+      const plexUsers = sharedUsers
+        .map(({ user }) => user)
+        .filter((user) => user.email);
 
       const unimportedPlexUsers: {
         id: string;
@@ -568,20 +601,19 @@ settingsRoutes.get(
         .orWhere('user.email IN (:...plexEmails)', { plexEmails })
         .getMany();
 
-      await Promise.all(
-        plexUsers.map(async (plexUser) => {
-          if (
-            !existingUsers.find(
-              (user) =>
-                user.plexId === parseInt(plexUser.id) ||
-                user.email === plexUser.email.toLowerCase()
-            ) &&
-            (await plexApi.checkUserAccess(parseInt(plexUser.id)))
-          ) {
-            unimportedPlexUsers.push(plexUser);
-          }
-        })
-      );
+      sharedUsers.forEach(({ user: plexUser, hasAccess }) => {
+        if (
+          plexUser.email &&
+          hasAccess &&
+          !existingUsers.find(
+            (user) =>
+              user.plexId === parseInt(plexUser.id) ||
+              user.email === plexUser.email.toLowerCase()
+          )
+        ) {
+          unimportedPlexUsers.push(plexUser);
+        }
+      });
 
       return res.status(200).json(sortBy(unimportedPlexUsers, 'username'));
     } catch (e) {

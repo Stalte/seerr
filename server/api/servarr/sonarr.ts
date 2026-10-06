@@ -1,5 +1,6 @@
 import logger from '@server/logger';
 import type { AxiosResponse } from 'axios';
+import type { HistoryRecord } from './base';
 import ServarrBase from './base';
 
 export interface SonarrSeason {
@@ -14,7 +15,7 @@ export interface SonarrSeason {
     percentOfEpisodes: number;
   };
 }
-interface EpisodeResult {
+export interface EpisodeResult {
   seriesId: number;
   episodeFileId: number;
   seasonNumber: number;
@@ -429,6 +430,84 @@ class SonarrAPI extends ServarrBase<{
 
     return newSeasons;
   }
+  public getSeriesHistory = async (
+    seriesId: number
+  ): Promise<HistoryRecord[]> => {
+    try {
+      const response = await this.axios.get<HistoryRecord[]>(
+        '/history/series',
+        { params: { seriesId } }
+      );
+
+      return response.data;
+    } catch (e) {
+      throw new Error(`[Sonarr] Failed to retrieve history: ${e.message}`, {
+        cause: e,
+      });
+    }
+  };
+
+  public getSeriesQueue = async (
+    seriesId: number
+  ): Promise<{ id: number; episodeId?: number }[]> => {
+    try {
+      const response = await this.axios.get<
+        { id: number; episodeId?: number }[]
+      >('/queue/details', { params: { seriesId } });
+
+      return response.data;
+    } catch (e) {
+      throw new Error(`[Sonarr] Failed to retrieve queue: ${e.message}`, {
+        cause: e,
+      });
+    }
+  };
+
+  /**
+   * Monitors the series and the given seasons, so a season or series search
+   * includes them.
+   */
+  public monitorSeries = async (
+    series: SonarrSeries,
+    seasonNumbers: number[]
+  ): Promise<void> => {
+    try {
+      await this.axios.put('/series', {
+        ...series,
+        monitored: true,
+        seasons: series.seasons.map((season) =>
+          seasonNumbers.includes(season.seasonNumber)
+            ? { ...season, monitored: true }
+            : season
+        ),
+      });
+    } catch (e) {
+      throw new Error(`[Sonarr] Failed to monitor series: ${e.message}`, {
+        cause: e,
+      });
+    }
+  };
+
+  public deleteEpisodeFile = async (episodeFileId: number): Promise<void> => {
+    try {
+      await this.axios.delete(`/episodefile/${episodeFileId}`);
+    } catch (e) {
+      if (e?.response?.status === 404) {
+        return;
+      }
+      throw new Error(`[Sonarr] Failed to delete episode file: ${e.message}`, {
+        cause: e,
+      });
+    }
+  };
+
+  /**
+   * Starts a search for the given episodes and throws if Sonarr refuses it.
+   */
+  public searchEpisodes = async (episodeIds: number[]): Promise<void> => {
+    await this.runCommand('EpisodeSearch', { episodeIds });
+  };
+
   public removeSeries = async (tvdbId: number): Promise<void> => {
     const { id, title } = await this.getSeriesByTvdbId(tvdbId);
 

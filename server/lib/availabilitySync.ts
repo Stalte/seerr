@@ -50,7 +50,9 @@ class AvailabilitySync {
     this.jellyfinEpisodeExistsCache = {};
     this.sonarrSeasonsCache = {};
     this.radarrServers = settings.radarr;
-    this.sonarrServers = settings.sonarr;
+    // Availability only tracks the original-language version, which the
+    // dubs-only server does not hold
+    this.sonarrServers = settings.sonarr.filter((server) => !server.isAnimeDub);
     this.enable4kMovie = this.radarrServers.some((server) => server.is4k);
     this.enable4kShow = this.sonarrServers.some((server) => server.is4k);
 

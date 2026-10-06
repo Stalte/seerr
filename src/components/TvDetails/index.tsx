@@ -61,6 +61,8 @@ import {
   MediaType,
 } from '@server/constants/media';
 import { MediaServerType } from '@server/constants/server';
+import type { AnimeAudio } from '@server/lib/animeAudio';
+import { getTakenSeasons } from '@server/lib/animeAudio';
 import type { TvDetails as TvDetailsType } from '@server/models/Tv';
 import type { Crew } from '@server/models/common';
 import axios from 'axios';
@@ -73,6 +75,8 @@ import { useIntl } from 'react-intl';
 import useSWR from 'swr';
 
 const messages = defineMessages('components.TvDetails', {
+  dubAvailable: 'English Dub',
+  dubPartiallyAvailable: 'English Dub Partially Available',
   firstAirDate: 'First Air Date',
   nextAirDate: 'Next Air Date',
   originallanguage: 'Original Language',
@@ -285,33 +289,44 @@ const TvDetails = ({ tv }: TvDetailsProps) => {
     );
   }
 
-  const getAllRequestedSeasons = (is4k: boolean): number[] => {
-    const requestedSeasons = (data?.mediaInfo?.requests ?? [])
-      .filter(
-        (request) =>
-          request.is4k === is4k &&
-          request.status !== MediaRequestStatus.DECLINED &&
-          request.status !== MediaRequestStatus.COMPLETED
-      )
-      .reduce((requestedSeasons, request) => {
-        return [
-          ...requestedSeasons,
-          ...request.seasons.map((sr) => sr.seasonNumber),
-        ];
-      }, [] as number[]);
+  const getAllRequestedSeasons = (
+    is4k: boolean,
+    animeAudio?: AnimeAudio
+  ): number[] => {
+    const activeRequests = (data?.mediaInfo?.requests ?? []).filter(
+      (request) =>
+        request.is4k === is4k &&
+        request.status !== MediaRequestStatus.DECLINED &&
+        request.status !== MediaRequestStatus.COMPLETED
+    );
 
     const availableSeasons = (data?.mediaInfo?.seasons ?? [])
       .filter(
         (season) =>
-          (season[is4k ? 'status4k' : 'status'] === MediaStatus.AVAILABLE ||
-            season[is4k ? 'status4k' : 'status'] ===
-              MediaStatus.PARTIALLY_AVAILABLE ||
-            season[is4k ? 'status4k' : 'status'] === MediaStatus.PROCESSING) &&
-          !requestedSeasons.includes(season.seasonNumber)
+          season[is4k ? 'status4k' : 'status'] === MediaStatus.AVAILABLE ||
+          season[is4k ? 'status4k' : 'status'] ===
+            MediaStatus.PARTIALLY_AVAILABLE ||
+          season[is4k ? 'status4k' : 'status'] === MediaStatus.PROCESSING
       )
       .map((season) => season.seasonNumber);
 
-    return [...requestedSeasons, ...availableSeasons];
+    // Dub availability is only recorded for the non-4K tier
+    const availableDubSeasons = is4k
+      ? []
+      : (data?.mediaInfo?.seasons ?? [])
+          .filter(
+            (season) =>
+              season.statusDub === MediaStatus.AVAILABLE ||
+              season.statusDub === MediaStatus.PARTIALLY_AVAILABLE
+          )
+          .map((season) => season.seasonNumber);
+
+    return getTakenSeasons(
+      activeRequests,
+      availableSeasons,
+      animeAudio,
+      availableDubSeasons
+    );
   };
 
   // Mirrors the season list the request modal offers, so the two agree.
@@ -324,8 +339,22 @@ const TvDetails = ({ tv }: TvDetailsProps) => {
     )
     .map((season) => season.seasonNumber);
 
+  const isAnime = data.keywords.some(
+    (keyword) => keyword.id === ANIME_KEYWORD_ID
+  );
+
   const isSeasonSetComplete = (is4k: boolean) => {
-    const requested = getAllRequestedSeasons(is4k);
+    // With a dubs-only Sonarr server, anime is only complete once both the
+    // original-language and the dubbed versions are covered
+    const dubEnabled =
+      isAnime &&
+      (is4k
+        ? settings.currentSettings.animeDub4kEnabled
+        : settings.currentSettings.animeDubEnabled);
+    const requested = getAllRequestedSeasons(
+      is4k,
+      dubEnabled ? 'both' : undefined
+    );
     return requestableSeasons.every((seasonNumber) =>
       requested.includes(seasonNumber)
     );
@@ -598,6 +627,18 @@ const TvDetails = ({ tv }: TvDetailsProps) => {
                   plexUrl={plexUrl4k}
                   serviceUrl={data.mediaInfo?.serviceUrl4k}
                 />
+              )}
+            {isAnime &&
+              (data.mediaInfo?.statusDub === MediaStatus.AVAILABLE ||
+                data.mediaInfo?.statusDub ===
+                  MediaStatus.PARTIALLY_AVAILABLE) && (
+                <Badge badgeType="success">
+                  {intl.formatMessage(
+                    data.mediaInfo.statusDub === MediaStatus.AVAILABLE
+                      ? messages.dubAvailable
+                      : messages.dubPartiallyAvailable
+                  )}
+                </Badge>
               )}
           </div>
           <h1 data-testid="media-title">

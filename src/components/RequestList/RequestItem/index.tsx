@@ -52,7 +52,17 @@ const messages = defineMessages('components.RequestList.RequestItem', {
   removearr: 'Remove from {arr}',
   removemediaerror: 'Something went wrong while removing the media.',
   profileName: 'Profile',
+  animeAudio: 'Version',
+  animeAudioSub: 'Subtitles',
+  animeAudioDub: 'English Dub',
+  animeAudioBoth: 'Subtitles + Dub',
 });
+
+const animeAudioMessages = {
+  sub: messages.animeAudioSub,
+  dub: messages.animeAudioDub,
+  both: messages.animeAudioBoth,
+};
 
 const isMovie = (movie: MovieDetails | TvDetails): movie is MovieDetails => {
   return (movie as MovieDetails).title !== undefined;
@@ -513,6 +523,16 @@ const RequestItem = ({ request, revalidateList }: RequestItemProps) => {
                       </span>
                     ))}
                   </div>
+                </div>
+              )}
+              {request.animeAudio && (
+                <div className="card-field">
+                  <span className="card-field-name">
+                    {intl.formatMessage(messages.animeAudio)}
+                  </span>
+                  <Badge badgeType="primary">
+                    {intl.formatMessage(animeAudioMessages[request.animeAudio])}
+                  </Badge>
                 </div>
               )}
             </div>

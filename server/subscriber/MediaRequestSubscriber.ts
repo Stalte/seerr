@@ -7,6 +7,7 @@ import type {
 import SonarrAPI from '@server/api/servarr/sonarr';
 import TheMovieDb from '@server/api/themoviedb';
 import { ANIME_KEYWORD_ID } from '@server/api/themoviedb/constants';
+import type { TmdbTvDetails } from '@server/api/themoviedb/interfaces';
 import {
   MediaRequestStatus,
   MediaStatus,
@@ -17,7 +18,13 @@ import Media from '@server/entity/Media';
 import { MediaRequest } from '@server/entity/MediaRequest';
 import Season from '@server/entity/Season';
 import SeasonRequest from '@server/entity/SeasonRequest';
+import {
+  coversDub,
+  coversSub,
+  findAnimeDubSonarr,
+} from '@server/lib/animeAudio';
 import notificationManager, { Notification } from '@server/lib/notifications';
+import type { SonarrSettings } from '@server/lib/settings';
 import { getSettings } from '@server/lib/settings';
 import logger from '@server/logger';
 import { withNestedTransaction } from '@server/utils/nestedTransaction';
@@ -503,35 +510,63 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
           return;
         }
 
-        let sonarrSettings = settings.sonarr.find(
-          (sonarr) => sonarr.isDefault && sonarr.is4k === entity.is4k
-        );
+        const wantsSub = coversSub(entity.animeAudio);
+        const wantsDub = coversDub(entity.animeAudio);
 
-        if (
-          entity.serverId !== null &&
-          entity.serverId >= 0 &&
-          sonarrSettings?.id !== entity.serverId
-        ) {
+        let sonarrSettings: SonarrSettings | undefined;
+
+        if (wantsSub) {
           sonarrSettings = settings.sonarr.find(
-            (sonarr) => sonarr.id === entity.serverId
+            (sonarr) =>
+              sonarr.isDefault &&
+              sonarr.is4k === entity.is4k &&
+              !sonarr.isAnimeDub
           );
-          logger.info(
-            `Request has an override server: ${sonarrSettings?.name}`,
-            {
-              label: 'Media Request',
-              requestId: entity.id,
-              mediaId: entity.media.id,
-            }
-          );
+
+          if (
+            entity.serverId !== null &&
+            entity.serverId >= 0 &&
+            sonarrSettings?.id !== entity.serverId
+          ) {
+            sonarrSettings = settings.sonarr.find(
+              (sonarr) => sonarr.id === entity.serverId
+            );
+            logger.info(
+              `Request has an override server: ${sonarrSettings?.name}`,
+              {
+                label: 'Media Request',
+                requestId: entity.id,
+                mediaId: entity.media.id,
+              }
+            );
+          }
+
+          if (!sonarrSettings) {
+            logger.warn(
+              `There is no default ${
+                entity.is4k ? '4K ' : ''
+              }Sonarr server configured. Did you set any of your ${
+                entity.is4k ? '4K ' : ''
+              }Sonarr servers as default?`,
+              {
+                label: 'Media Request',
+                requestId: entity.id,
+                mediaId: entity.media.id,
+              }
+            );
+            return;
+          }
         }
 
-        if (!sonarrSettings) {
+        let dubSettings = wantsDub
+          ? findAnimeDubSonarr(settings.sonarr, entity.is4k)
+          : undefined;
+
+        if (wantsDub && !dubSettings) {
           logger.warn(
-            `There is no default ${
+            `The request is for an English dub but there is no ${
               entity.is4k ? '4K ' : ''
-            }Sonarr server configured. Did you set any of your ${
-              entity.is4k ? '4K ' : ''
-            }Sonarr servers as default?`,
+            }dubs-only Sonarr server configured.`,
             {
               label: 'Media Request',
               requestId: entity.id,
@@ -549,29 +584,41 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
           throw new Error('Media data not found');
         }
 
-        if (
-          media[entity.is4k ? 'status4k' : 'status'] === MediaStatus.AVAILABLE
-        ) {
-          logger.warn('Media already exists, marking request as COMPLETED', {
-            label: 'Media Request',
-            requestId: entity.id,
-            mediaId: entity.media.id,
-          });
+        // Each version is skipped once Plex has it. Dub availability is only
+        // recorded for non-4K, from a Plex library marked as dubbed.
+        const subAvailable =
+          wantsSub &&
+          media[entity.is4k ? 'status4k' : 'status'] === MediaStatus.AVAILABLE;
+        const dubAvailable =
+          wantsDub && !entity.is4k && media.statusDub === MediaStatus.AVAILABLE;
 
-          const requestRepository = manager.getRepository(MediaRequest);
-          entity.status = MediaRequestStatus.COMPLETED;
-          entity.seasons.forEach((season) => {
-            season.status = MediaRequestStatus.COMPLETED;
-          });
-          await requestRepository.save(entity);
-          return;
+        if (subAvailable || dubAvailable) {
+          if ((!wantsSub || subAvailable) && (!wantsDub || dubAvailable)) {
+            logger.warn('Media already exists, marking request as COMPLETED', {
+              label: 'Media Request',
+              requestId: entity.id,
+              mediaId: entity.media.id,
+            });
+
+            const requestRepository = manager.getRepository(MediaRequest);
+            entity.status = MediaRequestStatus.COMPLETED;
+            entity.seasons.forEach((season) => {
+              season.status = MediaRequestStatus.COMPLETED;
+            });
+            await requestRepository.save(entity);
+            return;
+          }
+
+          if (subAvailable) {
+            sonarrSettings = undefined;
+          }
+
+          if (dubAvailable) {
+            dubSettings = undefined;
+          }
         }
 
         const tmdb = new TheMovieDb();
-        const sonarr = new SonarrAPI({
-          apiKey: sonarrSettings.apiKey,
-          url: SonarrAPI.buildUrl(sonarrSettings, '/api/v3'),
-        });
         const series = await tmdb.getTvShow({ tvId: media.tmdbId });
         const tvdbId = series.external_ids.tvdb_id ?? media.tvdbId;
 
@@ -582,222 +629,34 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
           throw new Error('TVDB ID not found');
         }
 
-        const isAnime = series.keywords.results.some(
-          (keyword) => keyword.id === ANIME_KEYWORD_ID
-        );
-
-        // seriesType only controls how Sonarr parses/numbers episodes
-        // it is sent in the addSeries payload and must not gate anime routing
-        let seriesType: SonarrSeries['seriesType'] =
-          sonarrSettings.seriesType ?? 'standard';
-
-        if (isAnime) {
-          seriesType = sonarrSettings.animeSeriesType ?? 'anime';
+        if (sonarrSettings) {
+          await this.addSeriesToSonarr(
+            entity,
+            media,
+            series,
+            tvdbId,
+            sonarrSettings,
+            { applyOverrides: true, trackService: true }
+          );
         }
 
-        let rootFolder =
-          isAnime && sonarrSettings.activeAnimeDirectory
-            ? sonarrSettings.activeAnimeDirectory
-            : sonarrSettings.activeDirectory;
-        let qualityProfile =
-          isAnime && sonarrSettings.activeAnimeProfileId
-            ? sonarrSettings.activeAnimeProfileId
-            : sonarrSettings.activeProfileId;
-        let languageProfile =
-          isAnime && sonarrSettings.activeAnimeLanguageProfileId
-            ? sonarrSettings.activeAnimeLanguageProfileId
-            : sonarrSettings.activeLanguageProfileId;
-        let tags = isAnime
-          ? sonarrSettings.animeTags
-            ? [...sonarrSettings.animeTags]
-            : []
-          : sonarrSettings.tags
-            ? [...sonarrSettings.tags]
-            : [];
-
-        if (
-          entity.rootFolder &&
-          entity.rootFolder !== '' &&
-          entity.rootFolder !== rootFolder
-        ) {
-          rootFolder = entity.rootFolder;
-          logger.info(`Request has an override root folder: ${rootFolder}`, {
-            label: 'Media Request',
-            requestId: entity.id,
-            mediaId: entity.media.id,
-          });
-        }
-
-        if (entity.profileId && entity.profileId !== qualityProfile) {
-          qualityProfile = entity.profileId;
-          logger.info(
-            `Request has an override quality profile ID: ${qualityProfile}`,
+        if (dubSettings) {
+          await this.addSeriesToSonarr(
+            entity,
+            media,
+            series,
+            tvdbId,
+            dubSettings,
             {
-              label: 'Media Request',
-              requestId: entity.id,
-              mediaId: entity.media.id,
+              applyOverrides: entity.serverId === dubSettings.id,
+              // The original-language server keeps the media's link when it
+              // has one, so the dub only takes it over on its own
+              trackService:
+                !sonarrSettings &&
+                media[entity.is4k ? 'serviceId4k' : 'serviceId'] == null,
             }
           );
         }
-
-        if (
-          entity.languageProfileId &&
-          entity.languageProfileId !== languageProfile
-        ) {
-          languageProfile = entity.languageProfileId;
-          logger.info(
-            `Request has an override language profile ID: ${languageProfile}`,
-            {
-              label: 'Media Request',
-              requestId: entity.id,
-              mediaId: entity.media.id,
-            }
-          );
-        }
-
-        if (entity.tags && !isEqual(entity.tags, tags)) {
-          tags = entity.tags;
-          logger.info(`Request has override tags`, {
-            label: 'Media Request',
-            requestId: entity.id,
-            mediaId: entity.media.id,
-            tagIds: tags,
-          });
-        }
-
-        if (sonarrSettings.tagRequests) {
-          const sonarrTags = await sonarr.getTags();
-          // old tags had space around the hyphen
-          let userTag = sonarrTags.find((v) =>
-            v.label.startsWith(entity.requestedBy.id + ' - ')
-          );
-          // new tags do not have spaces around the hyphen, since spaces are not allowed anymore
-          if (!userTag) {
-            userTag = sonarrTags.find((v) =>
-              v.label.startsWith(entity.requestedBy.id + '-')
-            );
-          }
-          if (!userTag) {
-            logger.info(`Requester has no active tag. Creating new`, {
-              label: 'Media Request',
-              requestId: entity.id,
-              mediaId: entity.media.id,
-              userId: entity.requestedBy.id,
-              newTag:
-                entity.requestedBy.id +
-                '-' +
-                sanitizeDisplayName(entity.requestedBy.displayName),
-            });
-            userTag = await sonarr.createTag({
-              label:
-                entity.requestedBy.id +
-                '-' +
-                sanitizeDisplayName(entity.requestedBy.displayName),
-            });
-          }
-          if (userTag.id) {
-            if (!tags?.find((v) => v === userTag?.id)) {
-              tags?.push(userTag.id);
-            }
-          } else {
-            logger.warn(`Requester has no tag and failed to add one`, {
-              label: 'Media Request',
-              requestId: entity.id,
-              mediaId: entity.media.id,
-              userId: entity.requestedBy.id,
-              sonarrServer: sonarrSettings.hostname + ':' + sonarrSettings.port,
-            });
-          }
-        }
-
-        const sonarrSeriesOptions: AddSeriesOptions = {
-          profileId: qualityProfile,
-          languageProfileId: languageProfile,
-          rootFolderPath: rootFolder,
-          title: series.name,
-          tvdbid: tvdbId,
-          seasons: entity.seasons.map((season) => season.seasonNumber),
-          seasonFolder: sonarrSettings.enableSeasonFolders,
-          seriesType,
-          tags,
-          monitored: true,
-          monitorNewItems: sonarrSettings.monitorNewItems,
-          searchNow: !sonarrSettings.preventSearch,
-        };
-
-        // Run entity asynchronously so we don't wait for it on the UI side
-        sonarr
-          .addSeries(sonarrSeriesOptions)
-          .then(async (sonarrSeries) => {
-            // Needs its own repository as this runs detached from the request transaction
-            const mediaRepository = getRepository(Media);
-            // We grab media again here to make sure we have the latest version of it
-            const media = await mediaRepository.findOne({
-              where: { id: entity.media.id },
-            });
-
-            if (!media) {
-              throw new Error('Media data not found');
-            }
-
-            media[entity.is4k ? 'externalServiceId4k' : 'externalServiceId'] =
-              sonarrSeries.id;
-            media[
-              entity.is4k ? 'externalServiceSlug4k' : 'externalServiceSlug'
-            ] = sonarrSeries.titleSlug;
-            media[entity.is4k ? 'serviceId4k' : 'serviceId'] =
-              sonarrSettings?.id;
-            await mediaRepository.save(media);
-          })
-          .catch(async () => {
-            try {
-              const requestRepository = getRepository(MediaRequest);
-
-              if (entity.status !== MediaRequestStatus.FAILED) {
-                entity.status = MediaRequestStatus.FAILED;
-                await requestRepository.save(entity);
-              }
-            } catch (saveError) {
-              logger.error('Failed to mark request as FAILED', {
-                label: 'Media Request',
-                requestId: entity.id,
-                errorMessage:
-                  saveError instanceof Error
-                    ? saveError.message
-                    : String(saveError),
-              });
-            }
-
-            logger.warn(
-              'Something went wrong sending series request to Sonarr, marking status as FAILED',
-              {
-                label: 'Media Request',
-                requestId: entity.id,
-                mediaId: entity.media.id,
-                sonarrSeriesOptions,
-              }
-            );
-
-            MediaRequest.sendNotification(
-              entity,
-              media,
-              Notification.MEDIA_FAILED
-            );
-          })
-          .finally(() => {
-            sonarr.clearCache({
-              tvdbId,
-              externalId: entity.is4k
-                ? media.externalServiceId4k
-                : media.externalServiceId,
-              title: series.name,
-            });
-          });
-        logger.info('Sent request to Sonarr', {
-          label: 'Media Request',
-          requestId: entity.id,
-          mediaId: entity.media.id,
-        });
       } catch (e) {
         const requestRepository = manager.getRepository(MediaRequest);
         const mediaRepository = manager.getRepository(Media);
@@ -827,6 +686,251 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
         }
       }
     }
+  }
+
+  private async addSeriesToSonarr(
+    entity: MediaRequest,
+    media: Media,
+    series: TmdbTvDetails,
+    tvdbId: number,
+    sonarrSettings: SonarrSettings,
+    {
+      applyOverrides,
+      trackService,
+    }: {
+      // The request's profile, folder, language and tag overrides were picked
+      // for one server and only apply to that one
+      applyOverrides: boolean;
+      // Whether this server becomes the one the media links to and tracks
+      trackService: boolean;
+    }
+  ): Promise<void> {
+    const sonarr = new SonarrAPI({
+      apiKey: sonarrSettings.apiKey,
+      url: SonarrAPI.buildUrl(sonarrSettings, '/api/v3'),
+    });
+
+    const isAnime = series.keywords.results.some(
+      (keyword) => keyword.id === ANIME_KEYWORD_ID
+    );
+
+    // seriesType only controls how Sonarr parses/numbers episodes
+    // it is sent in the addSeries payload and must not gate anime routing
+    let seriesType: SonarrSeries['seriesType'] =
+      sonarrSettings.seriesType ?? 'standard';
+
+    if (isAnime) {
+      seriesType = sonarrSettings.animeSeriesType ?? 'anime';
+    }
+
+    let rootFolder =
+      isAnime && sonarrSettings.activeAnimeDirectory
+        ? sonarrSettings.activeAnimeDirectory
+        : sonarrSettings.activeDirectory;
+    let qualityProfile =
+      isAnime && sonarrSettings.activeAnimeProfileId
+        ? sonarrSettings.activeAnimeProfileId
+        : sonarrSettings.activeProfileId;
+    let languageProfile =
+      isAnime && sonarrSettings.activeAnimeLanguageProfileId
+        ? sonarrSettings.activeAnimeLanguageProfileId
+        : sonarrSettings.activeLanguageProfileId;
+    let tags = isAnime
+      ? sonarrSettings.animeTags
+        ? [...sonarrSettings.animeTags]
+        : []
+      : sonarrSettings.tags
+        ? [...sonarrSettings.tags]
+        : [];
+
+    if (
+      applyOverrides &&
+      entity.rootFolder &&
+      entity.rootFolder !== '' &&
+      entity.rootFolder !== rootFolder
+    ) {
+      rootFolder = entity.rootFolder;
+      logger.info(`Request has an override root folder: ${rootFolder}`, {
+        label: 'Media Request',
+        requestId: entity.id,
+        mediaId: entity.media.id,
+      });
+    }
+
+    if (
+      applyOverrides &&
+      entity.profileId &&
+      entity.profileId !== qualityProfile
+    ) {
+      qualityProfile = entity.profileId;
+      logger.info(
+        `Request has an override quality profile ID: ${qualityProfile}`,
+        {
+          label: 'Media Request',
+          requestId: entity.id,
+          mediaId: entity.media.id,
+        }
+      );
+    }
+
+    if (
+      applyOverrides &&
+      entity.languageProfileId &&
+      entity.languageProfileId !== languageProfile
+    ) {
+      languageProfile = entity.languageProfileId;
+      logger.info(
+        `Request has an override language profile ID: ${languageProfile}`,
+        {
+          label: 'Media Request',
+          requestId: entity.id,
+          mediaId: entity.media.id,
+        }
+      );
+    }
+
+    if (applyOverrides && entity.tags && !isEqual(entity.tags, tags)) {
+      tags = entity.tags;
+      logger.info(`Request has override tags`, {
+        label: 'Media Request',
+        requestId: entity.id,
+        mediaId: entity.media.id,
+        tagIds: tags,
+      });
+    }
+
+    if (sonarrSettings.tagRequests) {
+      const sonarrTags = await sonarr.getTags();
+      // old tags had space around the hyphen
+      let userTag = sonarrTags.find((v) =>
+        v.label.startsWith(entity.requestedBy.id + ' - ')
+      );
+      // new tags do not have spaces around the hyphen, since spaces are not allowed anymore
+      if (!userTag) {
+        userTag = sonarrTags.find((v) =>
+          v.label.startsWith(entity.requestedBy.id + '-')
+        );
+      }
+      if (!userTag) {
+        logger.info(`Requester has no active tag. Creating new`, {
+          label: 'Media Request',
+          requestId: entity.id,
+          mediaId: entity.media.id,
+          userId: entity.requestedBy.id,
+          newTag:
+            entity.requestedBy.id +
+            '-' +
+            sanitizeDisplayName(entity.requestedBy.displayName),
+        });
+        userTag = await sonarr.createTag({
+          label:
+            entity.requestedBy.id +
+            '-' +
+            sanitizeDisplayName(entity.requestedBy.displayName),
+        });
+      }
+      if (userTag.id) {
+        if (!tags?.find((v) => v === userTag?.id)) {
+          tags?.push(userTag.id);
+        }
+      } else {
+        logger.warn(`Requester has no tag and failed to add one`, {
+          label: 'Media Request',
+          requestId: entity.id,
+          mediaId: entity.media.id,
+          userId: entity.requestedBy.id,
+          sonarrServer: sonarrSettings.hostname + ':' + sonarrSettings.port,
+        });
+      }
+    }
+
+    const sonarrSeriesOptions: AddSeriesOptions = {
+      profileId: qualityProfile,
+      languageProfileId: languageProfile,
+      rootFolderPath: rootFolder,
+      title: series.name,
+      tvdbid: tvdbId,
+      seasons: entity.seasons.map((season) => season.seasonNumber),
+      seasonFolder: sonarrSettings.enableSeasonFolders,
+      seriesType,
+      tags,
+      monitored: true,
+      monitorNewItems: sonarrSettings.monitorNewItems,
+      searchNow: !sonarrSettings.preventSearch,
+    };
+
+    // Run entity asynchronously so we don't wait for it on the UI side
+    sonarr
+      .addSeries(sonarrSeriesOptions)
+      .then(async (sonarrSeries) => {
+        if (!trackService) {
+          return;
+        }
+
+        // Needs its own repository as this runs detached from the request transaction
+        const mediaRepository = getRepository(Media);
+        // We grab media again here to make sure we have the latest version of it
+        const media = await mediaRepository.findOne({
+          where: { id: entity.media.id },
+        });
+
+        if (!media) {
+          throw new Error('Media data not found');
+        }
+
+        media[entity.is4k ? 'externalServiceId4k' : 'externalServiceId'] =
+          sonarrSeries.id;
+        media[entity.is4k ? 'externalServiceSlug4k' : 'externalServiceSlug'] =
+          sonarrSeries.titleSlug;
+        media[entity.is4k ? 'serviceId4k' : 'serviceId'] = sonarrSettings?.id;
+        await mediaRepository.save(media);
+      })
+      .catch(async () => {
+        try {
+          const requestRepository = getRepository(MediaRequest);
+
+          if (entity.status !== MediaRequestStatus.FAILED) {
+            entity.status = MediaRequestStatus.FAILED;
+            await requestRepository.save(entity);
+          }
+        } catch (saveError) {
+          logger.error('Failed to mark request as FAILED', {
+            label: 'Media Request',
+            requestId: entity.id,
+            errorMessage:
+              saveError instanceof Error
+                ? saveError.message
+                : String(saveError),
+          });
+        }
+
+        logger.warn(
+          'Something went wrong sending series request to Sonarr, marking status as FAILED',
+          {
+            label: 'Media Request',
+            requestId: entity.id,
+            mediaId: entity.media.id,
+            sonarrSeriesOptions,
+          }
+        );
+
+        MediaRequest.sendNotification(entity, media, Notification.MEDIA_FAILED);
+      })
+      .finally(() => {
+        sonarr.clearCache({
+          tvdbId,
+          externalId: entity.is4k
+            ? media.externalServiceId4k
+            : media.externalServiceId,
+          title: series.name,
+        });
+      });
+    logger.info('Sent request to Sonarr', {
+      label: 'Media Request',
+      requestId: entity.id,
+      mediaId: entity.media.id,
+      sonarrServer: sonarrSettings.name,
+    });
   }
 
   public async updateParentStatus(
