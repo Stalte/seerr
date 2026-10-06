@@ -318,6 +318,10 @@ components:
         enabled:
           type: boolean
           example: false
+        animeAudio:
+          type: string
+          enum: [sub, dub]
+          description: Set when the library holds subbed or dubbed anime.
       required:
         - id
         - name
@@ -2668,12 +2672,15 @@ paths:
           application/json:
             schema:
               type: object
-              required:
-                - enabled
               properties:
                 enabled:
                   type: boolean
                   example: true
+                animeAudio:
+                  type: string
+                  enum: [sub, dub]
+                  nullable: true
+                  description: Marks a show library as holding subbed or dubbed anime. A dub library only records English dub availability. null clears it.
       responses:
         '200':
           description: 'Plex library returned'

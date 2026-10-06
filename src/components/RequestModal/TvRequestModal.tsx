@@ -122,6 +122,8 @@ const TvRequestModal = ({
   const viewAudio: AnimeAudio | undefined = showAnimeAudio
     ? (animeAudio ?? 'sub')
     : undefined;
+  const statusKey =
+    viewAudio === 'dub' ? 'statusDub' : is4k ? 'status4k' : 'status';
   const { data: quota } = useSWR<QuotaResponse>(
     user &&
       (!requestOverrides?.user?.id || hasPermission(Permission.MANAGE_USERS))
@@ -298,6 +300,17 @@ const TvRequestModal = ({
       )
       .map((season) => season.seasonNumber);
 
+    // Dub availability is only recorded for the non-4K tier
+    const availableDubSeasons = is4k
+      ? []
+      : (data?.mediaInfo?.seasons ?? [])
+          .filter(
+            (season) =>
+              season.statusDub === MediaStatus.AVAILABLE ||
+              season.statusDub === MediaStatus.PARTIALLY_AVAILABLE
+          )
+          .map((season) => season.seasonNumber);
+
     return [
       ...new Set(
         getTakenSeasons(
@@ -308,7 +321,8 @@ const TvRequestModal = ({
             ),
           })),
           availableSeasons,
-          audio
+          audio,
+          availableDubSeasons
         )
       ),
     ];
@@ -660,17 +674,17 @@ const TvRequestModal = ({
                       const seasonRequest = getSeasonRequest(
                         season.seasonNumber
                       );
-                      // Availability only tracks the original-language version
-                      const mediaSeason = coversDub(viewAudio)
-                        ? undefined
-                        : data?.mediaInfo?.seasons.find(
-                            (sn) =>
-                              sn.seasonNumber === season.seasonNumber &&
-                              sn[is4k ? 'status4k' : 'status'] !==
-                                MediaStatus.UNKNOWN &&
-                              sn[is4k ? 'status4k' : 'status'] !==
-                                MediaStatus.DELETED
-                          );
+                      // The dub view shows dub availability, which is only
+                      // recorded for non-4K, and both has no single status
+                      const mediaSeason =
+                        viewAudio === 'both' || (is4k && viewAudio === 'dub')
+                          ? undefined
+                          : data?.mediaInfo?.seasons.find(
+                              (sn) =>
+                                sn.seasonNumber === season.seasonNumber &&
+                                sn[statusKey] !== MediaStatus.UNKNOWN &&
+                                sn[statusKey] !== MediaStatus.DELETED
+                            );
                       return (
                         <tr key={`season-${season.id}`}>
                           <td
@@ -763,13 +777,13 @@ const TvRequestModal = ({
                             {((!mediaSeason &&
                               seasonRequest?.status ===
                                 MediaRequestStatus.APPROVED) ||
-                              mediaSeason?.[is4k ? 'status4k' : 'status'] ===
+                              mediaSeason?.[statusKey] ===
                                 MediaStatus.PROCESSING) && (
                               <Badge badgeType="primary">
                                 {intl.formatMessage(globalMessages.requested)}
                               </Badge>
                             )}
-                            {mediaSeason?.[is4k ? 'status4k' : 'status'] ===
+                            {mediaSeason?.[statusKey] ===
                               MediaStatus.PARTIALLY_AVAILABLE && (
                               <Badge badgeType="success">
                                 {intl.formatMessage(
@@ -777,7 +791,7 @@ const TvRequestModal = ({
                                 )}
                               </Badge>
                             )}
-                            {mediaSeason?.[is4k ? 'status4k' : 'status'] ===
+                            {mediaSeason?.[statusKey] ===
                               MediaStatus.AVAILABLE && (
                               <Badge badgeType="success">
                                 {intl.formatMessage(globalMessages.available)}

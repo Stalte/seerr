@@ -403,7 +403,17 @@ export class MediaRequest {
                 MediaStatus.DELETED
           )
           .map((season) => season.seasonNumber),
-        animeAudio
+        animeAudio,
+        // Dub availability is only recorded for the non-4K tier
+        requestBody.is4k
+          ? []
+          : (media.seasons ?? [])
+              .filter(
+                (season) =>
+                  season.statusDub !== MediaStatus.UNKNOWN &&
+                  season.statusDub !== MediaStatus.DELETED
+              )
+              .map((season) => season.seasonNumber)
       );
 
       const finalSeasons = requestedSeasons.filter(

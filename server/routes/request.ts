@@ -600,17 +600,23 @@ requestRoutes.put<{ requestId: string }>(
                 );
 
                 // Seasons the media already covers cannot be requested again, while
-                // the ones this request holds stay on it. Availability only tracks
-                // the original-language version, so it never covers a dub.
+                // the ones this request holds stay on it. A dub is covered by dub
+                // availability, which is only recorded for the non-4K tier.
+                const coverKey = request.is4k
+                  ? 'status4k'
+                  : request.animeAudio === 'dub'
+                    ? 'statusDub'
+                    : 'status';
                 const coveredSeasons = (
-                  coversDub(request.animeAudio) ? [] : (media.seasons ?? [])
+                  request.animeAudio === 'both' ||
+                  (request.is4k && coversDub(request.animeAudio))
+                    ? []
+                    : (media.seasons ?? [])
                 )
                   .filter(
                     (season) =>
-                      season[request.is4k ? 'status4k' : 'status'] !==
-                        MediaStatus.UNKNOWN &&
-                      season[request.is4k ? 'status4k' : 'status'] !==
-                        MediaStatus.DELETED
+                      season[coverKey] !== MediaStatus.UNKNOWN &&
+                      season[coverKey] !== MediaStatus.DELETED
                   )
                   .map((season) => season.seasonNumber)
                   .filter((sn) => !currentSeasons.includes(sn));

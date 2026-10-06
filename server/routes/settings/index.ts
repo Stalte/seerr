@@ -61,6 +61,17 @@ const libraryUpdateSchema = z.object({
   enabled: z.boolean(),
 });
 
+const plexLibraryUpdateSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    // null clears the tag
+    animeAudio: z.enum(['sub', 'dub']).nullable().optional(),
+  })
+  .refine(
+    (body) => body.enabled !== undefined || body.animeAudio !== undefined,
+    { message: 'Nothing to update.' }
+  );
+
 const filteredMainSettings = (
   user: User,
   main: MainSettings
@@ -247,7 +258,7 @@ settingsRoutes.get('/plex/library', (_req, res) => {
 settingsRoutes.put('/plex/library/:libraryId', async (req, res, next) => {
   const settings = getSettings();
 
-  const bodyResult = libraryUpdateSchema.safeParse(req.body);
+  const bodyResult = plexLibraryUpdateSchema.safeParse(req.body);
 
   if (!bodyResult.success) {
     return next({ status: 400, message: 'Invalid request body.' });
@@ -261,7 +272,25 @@ settingsRoutes.put('/plex/library/:libraryId', async (req, res, next) => {
     return next({ status: 404, message: 'Library does not exist.' });
   }
 
-  library.enabled = bodyResult.data.enabled;
+  if (bodyResult.data.animeAudio !== undefined) {
+    if (library.type !== 'show') {
+      return next({
+        status: 400,
+        message: 'Only show libraries can hold anime.',
+      });
+    }
+
+    if (bodyResult.data.animeAudio === null) {
+      delete library.animeAudio;
+    } else {
+      library.animeAudio = bodyResult.data.animeAudio;
+    }
+  }
+
+  if (bodyResult.data.enabled !== undefined) {
+    library.enabled = bodyResult.data.enabled;
+  }
+
   await settings.save();
 
   return res.status(200).json(library);
