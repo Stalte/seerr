@@ -10,6 +10,7 @@ import { Label, Radio, RadioGroup } from '@headlessui/react';
 import { ArrowRightCircleIcon } from '@heroicons/react/24/solid';
 import { MediaStatus } from '@server/constants/media';
 import type Issue from '@server/entity/Issue';
+import type { IssueRetryTarget } from '@server/lib/issueRetry';
 import type { MovieDetails } from '@server/models/Movie';
 import type { TvDetails } from '@server/models/Tv';
 import axios from 'axios';
@@ -37,6 +38,19 @@ const messages = defineMessages('components.IssueModal.CreateIssueModal', {
   toastviewissue: 'View Issue',
   reportissue: 'Report an Issue',
   submitissue: 'Submit Issue',
+  deleteandretry: 'Delete and download again',
+  deleteandretryDescription:
+    'Delete this {mediaType}, block the release that was downloaded and search for a new one.',
+  retryMovie: 'movie',
+  retryEpisode: 'episode',
+  whichversion: 'Version',
+  standard: 'Standard',
+  original: 'Original with subtitles',
+  fourk: '4K',
+  dub: 'English dub',
+  toastRetryStarted: 'Media deleted. Searching again.',
+  toastRetryFailed:
+    'The issue was reported, but something went wrong while deleting the media.',
 });
 
 const isMovie = (movie: MovieDetails | TvDetails): movie is MovieDetails => {
@@ -65,6 +79,29 @@ const CreateIssueModal = ({
   const { data, error } = useSWR<MovieDetails | TvDetails>(
     tmdbId ? `/api/v1/${mediaType}/${tmdbId}` : null
   );
+  const canRetry = hasPermission(
+    [Permission.MANAGE_ISSUES, Permission.RETRY_ISSUE_MEDIA],
+    { type: 'or' }
+  );
+  const { data: retryData } = useSWR<{ targets: IssueRetryTarget[] }>(
+    canRetry && data?.mediaInfo?.id
+      ? `/api/v1/issue/retry-targets?mediaId=${data.mediaInfo.id}`
+      : null
+  );
+  const retryTargets = retryData?.targets ?? [];
+
+  const targetLabel = (target: IssueRetryTarget) => {
+    switch (target) {
+      case 'dub':
+        return intl.formatMessage(messages.dub);
+      case '4k':
+        return intl.formatMessage(messages.fourk);
+      default:
+        return intl.formatMessage(
+          retryTargets.includes('dub') ? messages.original : messages.standard
+        );
+    }
+  };
 
   if (!tmdbId) {
     return null;
@@ -97,6 +134,8 @@ const CreateIssueModal = ({
         message: '',
         problemSeason: availableSeasons.length === 1 ? availableSeasons[0] : 0,
         problemEpisode: 0,
+        deleteAndRetry: false,
+        retryTarget: '',
       }}
       validationSchema={CreateIssueModalSchema}
       onSubmit={async (values) => {
@@ -109,6 +148,33 @@ const CreateIssueModal = ({
             problemEpisode:
               values.problemSeason > 0 ? values.problemEpisode : 0,
           });
+
+          // Only a movie or a single episode can be deleted
+          const isSingleItem =
+            mediaType === 'movie' ||
+            (Number(values.problemSeason) > 0 &&
+              Number(values.problemEpisode) > 0);
+
+          if (
+            values.deleteAndRetry &&
+            isSingleItem &&
+            retryTargets.length > 0
+          ) {
+            try {
+              await axios.post(`/api/v1/issue/${newIssue.data.id}/retry`, {
+                target: values.retryTarget || retryTargets[0],
+              });
+              addToast(intl.formatMessage(messages.toastRetryStarted), {
+                appearance: 'success',
+                autoDismiss: true,
+              });
+            } catch {
+              addToast(intl.formatMessage(messages.toastRetryFailed), {
+                appearance: 'error',
+                autoDismiss: true,
+              });
+            }
+          }
 
           if (data) {
             addToast(
@@ -309,6 +375,55 @@ const CreateIssueModal = ({
                   <div className="error">{errors.message}</div>
                 )}
             </div>
+            {retryTargets.length > 0 &&
+              (mediaType === 'movie' ||
+                (Number(values.problemSeason) > 0 &&
+                  Number(values.problemEpisode) > 0)) && (
+                <div className="mt-4 rounded-md border border-gray-700 bg-gray-800/30 p-4">
+                  <label
+                    htmlFor="deleteAndRetry"
+                    className="flex items-start space-x-3"
+                  >
+                    <Field
+                      type="checkbox"
+                      id="deleteAndRetry"
+                      name="deleteAndRetry"
+                      className="mt-1"
+                    />
+                    <span className="flex flex-col">
+                      <span className="font-medium text-gray-100">
+                        {intl.formatMessage(messages.deleteandretry)}
+                      </span>
+                      <span className="text-sm text-gray-400">
+                        {intl.formatMessage(
+                          messages.deleteandretryDescription,
+                          {
+                            mediaType: intl.formatMessage(
+                              mediaType === 'movie'
+                                ? messages.retryMovie
+                                : messages.retryEpisode
+                            ),
+                          }
+                        )}
+                      </span>
+                    </span>
+                  </label>
+                  {values.deleteAndRetry && retryTargets.length > 1 && (
+                    <div className="mt-3 flex items-center space-x-3">
+                      <label htmlFor="retryTarget" className="text-sm">
+                        {intl.formatMessage(messages.whichversion)}
+                      </label>
+                      <Field as="select" id="retryTarget" name="retryTarget">
+                        {retryTargets.map((target) => (
+                          <option value={target} key={`retry-${target}`}>
+                            {targetLabel(target)}
+                          </option>
+                        ))}
+                      </Field>
+                    </div>
+                  )}
+                </div>
+              )}
           </Modal>
         );
       }}

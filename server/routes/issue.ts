@@ -170,6 +170,26 @@ issueRoutes.post<Record<string, string>, Issue, IssueRequestBody>(
   }
 );
 
+issueRoutes.get<Record<string, string>>(
+  '/retry-targets',
+  isAuthenticated([Permission.MANAGE_ISSUES, Permission.RETRY_ISSUE_MEDIA], {
+    type: 'or',
+  }),
+  async (req, res, next) => {
+    const media = await getRepository(Media).findOne({
+      where: { id: Number(req.query.mediaId) },
+    });
+
+    if (!media) {
+      return next({ status: 404, message: 'Media does not exist.' });
+    }
+
+    const targets = await getRetryTargets(media);
+
+    return res.status(200).json({ targets });
+  }
+);
+
 issueRoutes.get('/count', async (req, res, next) => {
   const issueRepository = getRepository(Issue);
 

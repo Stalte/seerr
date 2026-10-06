@@ -1,12 +1,14 @@
+import PlexAPI from '@server/api/plexapi';
 import type { HistoryRecord } from '@server/api/servarr/base';
 import RadarrAPI from '@server/api/servarr/radarr';
 import SonarrAPI from '@server/api/servarr/sonarr';
 import TheMovieDb from '@server/api/themoviedb';
 import { MediaType } from '@server/constants/media';
+import { MediaServerType } from '@server/constants/server';
 import { getRepository } from '@server/datasource';
 import Issue from '@server/entity/Issue';
 import type Media from '@server/entity/Media';
-import type { User } from '@server/entity/User';
+import { User } from '@server/entity/User';
 import { findAnimeDubSonarr } from '@server/lib/animeAudio';
 import notificationManager, { Notification } from '@server/lib/notifications';
 import type { DVRSettings } from '@server/lib/settings';
@@ -475,6 +477,60 @@ export const retryIssueMedia = async (
   await sendRetryNotification(issue, user, target);
 };
 
+/**
+ * Asks the main Plex server to scan the libraries that hold this media, so
+ * the new file shows up without waiting for the next scheduled scan. A dub
+ * goes to the libraries marked as dubbed, anything else to the others.
+ */
+const refreshPlexLibraries = async (issue: Issue, target: IssueRetryTarget) => {
+  const settings = getSettings();
+
+  if (settings.main.mediaServerType !== MediaServerType.PLEX) {
+    return;
+  }
+
+  const type = issue.media.mediaType === MediaType.MOVIE ? 'movie' : 'show';
+  const libraries = settings.plex.libraries.filter(
+    (library) =>
+      library.enabled &&
+      library.type === type &&
+      (target === 'dub') === (library.animeAudio === 'dub')
+  );
+
+  if (libraries.length === 0) {
+    return;
+  }
+
+  const admin = await getRepository(User).findOne({
+    select: { id: true, plexToken: true },
+    where: { id: 1 },
+  });
+
+  if (!admin?.plexToken) {
+    return;
+  }
+
+  const plex = new PlexAPI({ plexToken: admin.plexToken });
+
+  for (const library of libraries) {
+    try {
+      await plex.refreshLibrary(library.id);
+      logger.info('Asked Plex to scan a library after delete and retry', {
+        label: 'Issue Retry',
+        issueId: issue.id,
+        library: library.name,
+      });
+    } catch (e) {
+      logger.warn('Could not ask Plex to scan a library', {
+        label: 'Issue Retry',
+        issueId: issue.id,
+        library: library.name,
+        errorMessage: e.message,
+      });
+    }
+  }
+};
+
 const checkIssue = async (issue: Issue): Promise<void> => {
   const data = issue.retryData;
   if (!data) {
@@ -537,6 +593,10 @@ const checkIssue = async (issue: Issue): Promise<void> => {
 
   if (status !== issue.retryStatus) {
     await saveRetry(issue, status, data);
+
+    if (status === 'added') {
+      await refreshPlexLibraries(issue, data.target);
+    }
   }
 };
 
