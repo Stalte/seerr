@@ -1,5 +1,6 @@
 import type { MediaType } from '@server/constants/media';
 import type { MediaRequest } from '@server/entity/MediaRequest';
+import type { AnimeAudio } from '@server/lib/animeAudio';
 import type { NonFunctionProperties, PaginatedResponse } from './common';
 
 export interface RequestResultsResponse extends PaginatedResponse {
@@ -27,4 +28,5 @@ export type MediaRequestBody = {
   userId?: number;
   tags?: number[];
   ignoreQuota?: boolean;
+  animeAudio?: AnimeAudio;
 };
