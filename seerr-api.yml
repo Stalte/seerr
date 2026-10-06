@@ -7987,6 +7987,35 @@ paths:
                     type: number
                   closed:
                     type: number
+  /issue/retry-targets:
+    get:
+      summary: Get the copies of a media item that can be deleted and retried
+      description: |
+        Returns which copies (standard, 4k, dub) Radarr or Sonarr has for the media, so the report form can offer delete and retry.
+
+        Requires the `RETRY_ISSUE_MEDIA` or `MANAGE_ISSUES` permission.
+      tags:
+        - issue
+      parameters:
+        - in: query
+          name: mediaId
+          required: true
+          schema:
+            type: number
+            example: 1
+      responses:
+        '200':
+          description: Retry targets
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  targets:
+                    type: array
+                    items:
+                      type: string
+                      enum: [standard, 4k, dub]
   /issue/{issueId}:
     get:
       summary: Get issue

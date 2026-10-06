@@ -135,6 +135,13 @@ class PlexAPI extends ExternalAPI {
     return response.MediaContainer.Directory;
   }
 
+  /**
+   * Asks Plex to scan a library section for new and removed files.
+   */
+  public async refreshLibrary(sectionId: string): Promise<void> {
+    await this.axios.get(`/library/sections/${sectionId}/refresh`);
+  }
+
   public async syncLibraries(): Promise<void> {
     const settings = getSettings();
 
