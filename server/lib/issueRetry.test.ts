@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import type { HistoryRecord } from '@server/api/servarr/base';
-import { findReleasesToBlocklist } from '@server/lib/issueRetry';
+import { MediaType } from '@server/constants/media';
+import { findReleasesToBlocklist, isSingleItem } from '@server/lib/issueRetry';
 
 const record = (
   id: number,
@@ -72,5 +73,23 @@ describe('findReleasesToBlocklist', () => {
     ];
 
     assert.deepEqual(findReleasesToBlocklist(history, [10]), [1]);
+  });
+});
+
+describe('isSingleItem', () => {
+  const issue = (
+    mediaType: MediaType,
+    problemSeason: number,
+    problemEpisode: number
+  ) => ({ media: { mediaType }, problemSeason, problemEpisode });
+
+  it('allows a movie and a single episode', () => {
+    assert.equal(isSingleItem(issue(MediaType.MOVIE, 0, 0)), true);
+    assert.equal(isSingleItem(issue(MediaType.TV, 2, 5)), true);
+  });
+
+  it('refuses a whole season or series', () => {
+    assert.equal(isSingleItem(issue(MediaType.TV, 2, 0)), false);
+    assert.equal(isSingleItem(issue(MediaType.TV, 0, 0)), false);
   });
 });

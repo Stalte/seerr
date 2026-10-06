@@ -6,7 +6,9 @@ import { MediaType } from '@server/constants/media';
 import { getRepository } from '@server/datasource';
 import Issue from '@server/entity/Issue';
 import type Media from '@server/entity/Media';
+import type { User } from '@server/entity/User';
 import { findAnimeDubSonarr } from '@server/lib/animeAudio';
+import notificationManager, { Notification } from '@server/lib/notifications';
 import type { DVRSettings } from '@server/lib/settings';
 import { getSettings } from '@server/lib/settings';
 import logger from '@server/logger';
@@ -292,91 +294,121 @@ const retrySeries = async (
     throw new Error(`The series is not in ${server.name}`);
   }
 
-  const seasonNumber = issue.problemSeason || undefined;
-  const episodeNumber = seasonNumber
-    ? issue.problemEpisode || undefined
-    : undefined;
-  const episodes = (await sonarr.getEpisodes(series.id)).filter(
+  const episode = (await sonarr.getEpisodes(series.id)).find(
     (episode) =>
-      episode.seasonNumber > 0 &&
-      (!seasonNumber || episode.seasonNumber === seasonNumber) &&
-      (!episodeNumber || episode.episodeNumber === episodeNumber)
+      episode.seasonNumber === issue.problemSeason &&
+      episode.episodeNumber === issue.problemEpisode
   );
 
-  if (episodes.length === 0) {
-    throw new Error(`The episodes are not in ${server.name}`);
+  if (!episode) {
+    throw new Error(`The episode is not in ${server.name}`);
   }
 
-  const withFiles = episodes.filter(
-    (episode) => episode.hasFile && episode.episodeFileId > 0
-  );
-  const history =
-    withFiles.length > 0 ? await sonarr.getSeriesHistory(series.id) : [];
-  const releases = findReleasesToBlocklist(
-    history,
-    withFiles.map((episode) => episode.id)
-  );
-
-  // What has to come back: the deleted episodes, or the ones that have
-  // aired when nothing was on disk
-  const tracked =
-    withFiles.length > 0
-      ? withFiles
-      : episodes.filter(
-          (episode) =>
-            !episode.airDateUtc || new Date(episode.airDateUtc) <= new Date()
-        );
+  const hasFile = episode.hasFile && episode.episodeFileId > 0;
+  const history = hasFile ? await sonarr.getSeriesHistory(series.id) : [];
+  const releases = findReleasesToBlocklist(history, [episode.id]);
   const data = {
     target,
     serviceId: server.id,
     externalId: series.id,
-    seasonNumber,
-    episodeIds: tracked.map((episode) => episode.id),
+    seasonNumber: episode.seasonNumber,
+    episodeIds: [episode.id],
   };
 
-  for (const episodeFileId of new Set(
-    withFiles.map((episode) => episode.episodeFileId)
-  )) {
-    await sonarr.deleteEpisodeFile(episodeFileId);
+  if (hasFile) {
+    await sonarr.deleteEpisodeFile(episode.episodeFileId);
   }
   await saveRetry(issue, 'deleted', data);
 
-  // Sonarr can unmonitor deleted episodes, and season and series searches
-  // only look for monitored ones
-  const seasonNumbers = [
-    ...new Set(tracked.map((episode) => episode.seasonNumber)),
-  ];
+  // Sonarr can unmonitor deleted episodes, and an unmonitored series or
+  // season would not pick up a new release later
   if (
     !series.monitored ||
     series.seasons.some(
       (season) =>
-        seasonNumbers.includes(season.seasonNumber) && !season.monitored
+        season.seasonNumber === episode.seasonNumber && !season.monitored
     )
   ) {
-    await sonarr.monitorSeries(series, seasonNumbers);
+    await sonarr.monitorSeries(series, [episode.seasonNumber]);
   }
-  if (data.episodeIds.length > 0) {
-    await sonarr.monitorEpisodes(data.episodeIds);
-  }
+  await sonarr.monitorEpisodes([episode.id]);
 
   await markFailed(sonarr, releases, issue);
-  await startSeriesSearch(sonarr, data);
+  await sonarr.searchEpisodes([episode.id]);
   await saveRetry(issue, 'searching', data);
 };
 
-const startSeriesSearch = (
-  sonarr: SonarrAPI,
-  data: Pick<IssueRetryData, 'externalId' | 'seasonNumber' | 'episodeIds'>
-) =>
-  sonarr.startSearch(data.externalId, {
-    seasonNumber: data.seasonNumber,
-    // One episode is searched on its own, more go through a season or
-    // series search so season packs are found
-    episodeIds:
-      data.seasonNumber && data.episodeIds?.length === 1
-        ? data.episodeIds
+/**
+ * Only one movie or one episode can be deleted, never a whole season or
+ * series.
+ */
+export const isSingleItem = (
+  issue: Pick<Issue, 'problemSeason' | 'problemEpisode'> & {
+    media: Pick<Media, 'mediaType'>;
+  }
+): boolean =>
+  issue.media.mediaType === MediaType.MOVIE ||
+  (issue.problemSeason > 0 && issue.problemEpisode > 0);
+
+const sendRetryNotification = async (
+  issue: Issue,
+  user: User,
+  target: IssueRetryTarget
+) => {
+  try {
+    const tmdb = new TheMovieDb();
+    let subject: string;
+    let posterPath: string | undefined;
+    const extra: { name: string; value: string }[] = [];
+
+    if (issue.media.mediaType === MediaType.MOVIE) {
+      const movie = await tmdb.getMovie({ movieId: issue.media.tmdbId });
+      subject = `${movie.title}${
+        movie.release_date ? ` (${movie.release_date.slice(0, 4)})` : ''
+      }`;
+      posterPath = movie.poster_path;
+    } else {
+      const tvshow = await tmdb.getTvShow({ tvId: issue.media.tmdbId });
+      subject = `${tvshow.name}${
+        tvshow.first_air_date ? ` (${tvshow.first_air_date.slice(0, 4)})` : ''
+      }`;
+      posterPath = tvshow.poster_path;
+      extra.push(
+        { name: 'Affected Season', value: issue.problemSeason.toString() },
+        { name: 'Affected Episode', value: issue.problemEpisode.toString() }
+      );
+    }
+
+    if (target !== 'standard') {
+      extra.push({
+        name: 'Version',
+        value: target === 'dub' ? 'English dub' : '4K',
+      });
+    }
+
+    notificationManager.sendNotification(Notification.ISSUE_MEDIA_RETRIED, {
+      event: 'Media Deleted and Retried',
+      subject,
+      message: `${user.displayName} deleted the ${
+        issue.media.mediaType === MediaType.MOVIE ? 'movie' : 'episode'
+      }, blocked the release and started a new search.`,
+      issue,
+      media: issue.media,
+      image: posterPath
+        ? `https://image.tmdb.org/t/p/w600_and_h900_bestv2${posterPath}`
         : undefined,
-  });
+      extra,
+      notifyAdmin: true,
+      notifySystem: true,
+    });
+  } catch (e) {
+    logger.error('Failed to send the delete and retry notification', {
+      label: 'Notifications',
+      issueId: issue.id,
+      errorMessage: e.message,
+    });
+  }
+};
 
 /**
  * Deletes the media an issue is about from Radarr or Sonarr, blocklists the
@@ -385,8 +417,13 @@ const startSeriesSearch = (
  */
 export const retryIssueMedia = async (
   issue: Issue,
-  target: IssueRetryTarget
+  target: IssueRetryTarget,
+  user: User
 ): Promise<void> => {
+  if (!isSingleItem(issue)) {
+    throw new Error('Only a movie or a single episode can be deleted');
+  }
+
   const server = findServer(issue.media, target);
 
   if (!server) {
@@ -411,6 +448,11 @@ export const retryIssueMedia = async (
       await retrySeries(issue, target, server);
     }
   } catch (e) {
+    // The files are gone even though the search did not start
+    if (issue.retryStatus === 'deleted') {
+      await sendRetryNotification(issue, user, target);
+    }
+
     logger.error('Delete and retry failed', {
       label: 'Issue Retry',
       issueId: issue.id,
@@ -429,6 +471,8 @@ export const retryIssueMedia = async (
 
     throw e;
   }
+
+  await sendRetryNotification(issue, user, target);
 };
 
 const checkIssue = async (issue: Issue): Promise<void> => {
@@ -470,7 +514,7 @@ const checkIssue = async (issue: Issue): Promise<void> => {
     const episodeIds = data.episodeIds ?? [];
 
     if (issue.retryStatus === 'deleted') {
-      await startSeriesSearch(sonarr, data);
+      await sonarr.searchEpisodes(episodeIds);
       status = 'searching';
     } else {
       const episodes = (await sonarr.getEpisodes(data.externalId)).filter(

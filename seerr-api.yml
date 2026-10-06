@@ -8156,7 +8156,7 @@ paths:
     post:
       summary: Delete an issue's media and search again
       description: |
-        Deletes the files in Radarr or Sonarr, blocklists the release that was on disk and starts a new search. Progress is reported in the issue's `retryStatus`.
+        Only for a movie or a single episode. Deletes the file in Radarr or Sonarr, blocklists the release that was on disk and starts a new search. Progress is reported in the issue's `retryStatus`.
 
         Requires the `RETRY_ISSUE_MEDIA` permission on the user's own issue, or `MANAGE_ISSUES`.
       tags:

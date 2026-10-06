@@ -502,23 +502,10 @@ class SonarrAPI extends ServarrBase<{
   };
 
   /**
-   * Starts a search for one episode, one season or the whole series, and
-   * throws if Sonarr refuses it.
+   * Starts a search for the given episodes and throws if Sonarr refuses it.
    */
-  public startSearch = async (
-    seriesId: number,
-    scope: { seasonNumber?: number; episodeIds?: number[] }
-  ): Promise<void> => {
-    if (scope.episodeIds?.length) {
-      await this.runCommand('EpisodeSearch', { episodeIds: scope.episodeIds });
-    } else if (scope.seasonNumber) {
-      await this.runCommand('SeasonSearch', {
-        seriesId,
-        seasonNumber: scope.seasonNumber,
-      });
-    } else {
-      await this.runCommand('SeriesSearch', { seriesId });
-    }
+  public searchEpisodes = async (episodeIds: number[]): Promise<void> => {
+    await this.runCommand('EpisodeSearch', { episodeIds });
   };
 
   public removeSeries = async (tvdbId: number): Promise<void> => {

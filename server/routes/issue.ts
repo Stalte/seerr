@@ -11,6 +11,7 @@ import type {
 import {
   getRetryTargets,
   isIssueRetryTarget,
+  isSingleItem,
   retryIssueMedia,
 } from '@server/lib/issueRetry';
 import { Permission } from '@server/lib/permissions';
@@ -323,7 +324,9 @@ issueRoutes.get<{ issueId: string }>(
       return next(issue);
     }
 
-    const targets = await getRetryTargets(issue.media);
+    const targets = isSingleItem(issue)
+      ? await getRetryTargets(issue.media)
+      : [];
 
     return res.status(200).json({ targets });
   }
@@ -349,8 +352,15 @@ issueRoutes.post<{ issueId: string }, Issue, { target?: string }>(
       return next(issue);
     }
 
+    if (!isSingleItem(issue)) {
+      return next({
+        status: 400,
+        message: 'Only a movie or a single episode can be deleted.',
+      });
+    }
+
     try {
-      await retryIssueMedia(issue, target);
+      await retryIssueMedia(issue, target, req.user);
     } catch (e) {
       return next({
         status: 500,

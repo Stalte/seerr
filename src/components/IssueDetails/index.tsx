@@ -322,8 +322,12 @@ const IssueDetails = () => {
           <IssueRetry
             issue={issueData}
             canRetry={
-              hasPermission(Permission.MANAGE_ISSUES) ||
-              (belongsToUser && hasPermission(Permission.RETRY_ISSUE_MEDIA))
+              // Only a movie or a single episode, never a season or series
+              (issueData.media.mediaType === MediaType.MOVIE ||
+                (issueData.problemSeason > 0 &&
+                  issueData.problemEpisode > 0)) &&
+              (hasPermission(Permission.MANAGE_ISSUES) ||
+                (belongsToUser && hasPermission(Permission.RETRY_ISSUE_MEDIA)))
             }
             onUpdate={revalidateIssue}
           />

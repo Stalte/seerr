@@ -26,8 +26,6 @@ const messages = defineMessages('components.IssueDetails.IssueRetry', {
     'This deletes the {mediaType} from the server, blocks the release that was downloaded and searches for a new one. It will be unavailable until the new download finishes.',
   movie: 'movie',
   episode: 'episode',
-  season: 'season',
-  series: 'series',
   whichversion: 'Which version has the problem?',
   standard: 'Standard',
   original: 'Original with subtitles',
@@ -114,17 +112,12 @@ const IssueRetry = ({ issue, canRetry, onUpdate }: IssueRetryProps) => {
     }
   };
 
-  const mediaTypeLabel = () => {
-    if (issue.media.mediaType === MediaType.MOVIE) {
-      return intl.formatMessage(messages.movie);
-    }
-    if (issue.problemSeason > 0) {
-      return intl.formatMessage(
-        issue.problemEpisode > 0 ? messages.episode : messages.season
-      );
-    }
-    return intl.formatMessage(messages.series);
-  };
+  const mediaTypeLabel = () =>
+    intl.formatMessage(
+      issue.media.mediaType === MediaType.MOVIE
+        ? messages.movie
+        : messages.episode
+    );
 
   const retry = async () => {
     setSubmitting(true);

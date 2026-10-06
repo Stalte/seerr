@@ -74,7 +74,7 @@ export const messages = defineMessages('components.PermissionEdit', {
     'Grant permission to view media issues reported by other users.',
   retryissuemedia: 'Delete Media and Retry',
   retryissuemediaDescription:
-    'Grant permission to delete the media of an issue the user reported, block the downloaded release and search for a new one.',
+    'Grant permission to delete the movie or episode of an issue the user reported, block the downloaded release and search for a new one. Whole seasons cannot be deleted.',
   viewrecent: 'View Recently Added',
   viewrecentDescription:
     'Grant permission to view the list of recently added media.',
