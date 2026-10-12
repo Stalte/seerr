@@ -14,6 +14,7 @@
   "notifications.agents.email.issue": "issue",
   "notifications.agents.email.issueComment": "{userName} commented on the {issueType} for the {mediaType} {subject}:",
   "notifications.agents.email.issueCreated": "A new {issueType} has been reported by {userName} for the {mediaType} {subject}:",
+  "notifications.agents.email.issueMediaRetried": "The media for the {issueType} for the {mediaType} {subject} was deleted and a new search started:",
   "notifications.agents.email.issueReopened": "The {issueType} for the {mediaType} {subject} was reopened by {userName}.",
   "notifications.agents.email.issueResolved": "The {issueType} for the {mediaType} {subject} was marked as resolved by {userName}!",
   "notifications.agents.email.issueType": "{type} issue",

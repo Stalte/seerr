@@ -1,4 +1,5 @@
 import TheMovieDb from '@server/api/themoviedb';
+import { ANIME_KEYWORD_ID } from '@server/api/themoviedb/constants';
 import {
   MediaRequestStatus,
   MediaStatus,
@@ -6,6 +7,12 @@ import {
 } from '@server/constants/media';
 import { getRepository } from '@server/datasource';
 import type { MediaRequestBody } from '@server/interfaces/api/requestInterfaces';
+import type { AnimeAudio } from '@server/lib/animeAudio';
+import {
+  findAnimeDubSonarr,
+  getTakenSeasons,
+  isAnimeAudio,
+} from '@server/lib/animeAudio';
 import notificationManager, { Notification } from '@server/lib/notifications';
 import overrideRules from '@server/lib/overrideRules';
 import { Permission } from '@server/lib/permissions';
@@ -40,6 +47,7 @@ export class QuotaRestrictedError extends Error {}
 export class DuplicateMediaRequestError extends Error {}
 export class NoSeasonsAvailableError extends Error {}
 export class BlocklistedMediaError extends Error {}
+export class InvalidAnimeAudioError extends Error {}
 
 type MediaRequestOptions = {
   isAutoRequest?: boolean;
@@ -369,43 +377,44 @@ export class MediaRequest {
         requestedSeasons = requestedSeasons.filter((sn) => sn > 0);
       }
 
-      let existingSeasons: number[] = [];
+      const animeAudio = MediaRequest.resolveAnimeAudio(
+        requestBody,
+        tmdbMediaShow
+      );
 
       // We need to check existing requests on this title to make sure we don't double up on seasons that were
       // already requested. In the case they were, we just throw out any duplicates but still approve the request.
       // (Unless there are no seasons, in which case we abort)
-      if (media.requests) {
-        existingSeasons = media.requests
+      // Seasons that are available/partially available but don't have existing requests count as taken too.
+      // Requests for the other anime audio version do not overlap with this one.
+      const existingSeasons = getTakenSeasons(
+        (media.requests ?? []).filter(
+          (request) =>
+            request.is4k === requestBody.is4k &&
+            request.status !== MediaRequestStatus.DECLINED &&
+            request.status !== MediaRequestStatus.COMPLETED
+        ),
+        (media.seasons ?? [])
           .filter(
-            (request) =>
-              request.is4k === requestBody.is4k &&
-              request.status !== MediaRequestStatus.DECLINED &&
-              request.status !== MediaRequestStatus.COMPLETED
+            (season) =>
+              season[requestBody.is4k ? 'status4k' : 'status'] !==
+                MediaStatus.UNKNOWN &&
+              season[requestBody.is4k ? 'status4k' : 'status'] !==
+                MediaStatus.DELETED
           )
-          .reduce((seasons, request) => {
-            const combinedSeasons = request.seasons.map(
-              (season) => season.seasonNumber
-            );
-
-            return [...seasons, ...combinedSeasons];
-          }, [] as number[]);
-      }
-
-      // We should also check seasons that are available/partially available but don't have existing requests
-      if (media.seasons) {
-        existingSeasons = [
-          ...existingSeasons,
-          ...media.seasons
-            .filter(
-              (season) =>
-                season[requestBody.is4k ? 'status4k' : 'status'] !==
-                  MediaStatus.UNKNOWN &&
-                season[requestBody.is4k ? 'status4k' : 'status'] !==
-                  MediaStatus.DELETED
-            )
-            .map((season) => season.seasonNumber),
-        ];
-      }
+          .map((season) => season.seasonNumber),
+        animeAudio,
+        // Dub availability is only recorded for the non-4K tier
+        requestBody.is4k
+          ? []
+          : (media.seasons ?? [])
+              .filter(
+                (season) =>
+                  season.statusDub !== MediaStatus.UNKNOWN &&
+                  season.statusDub !== MediaStatus.DELETED
+              )
+              .map((season) => season.seasonNumber)
+      );
 
       const finalSeasons = requestedSeasons.filter(
         (rs) => !existingSeasons.includes(rs)
@@ -484,11 +493,50 @@ export class MediaRequest {
         ),
         isAutoRequest: options.isAutoRequest ?? false,
         ignoreQuota,
+        animeAudio,
       });
 
       await requestRepository.save(request);
       return request;
     }
+  }
+
+  /**
+   * The anime audio a TV request is for, or null when the choice does not
+   * apply (not anime, or no dubs-only Sonarr server for this tier).
+   */
+  private static resolveAnimeAudio(
+    requestBody: MediaRequestBody,
+    tmdbShow: { keywords?: { results?: { id: number }[] } }
+  ): AnimeAudio | null {
+    if (requestBody.animeAudio == null) {
+      return null;
+    }
+
+    if (!isAnimeAudio(requestBody.animeAudio)) {
+      throw new InvalidAnimeAudioError(
+        `Invalid anime audio: ${requestBody.animeAudio}`
+      );
+    }
+
+    const isAnime = (tmdbShow.keywords?.results ?? []).some(
+      (keyword) => keyword.id === ANIME_KEYWORD_ID
+    );
+
+    if (!isAnime) {
+      return null;
+    }
+
+    if (
+      !findAnimeDubSonarr(getSettings().sonarr, !!requestBody.is4k) &&
+      requestBody.animeAudio !== 'sub'
+    ) {
+      throw new InvalidAnimeAudioError(
+        `No ${requestBody.is4k ? '4K ' : ''}dubs-only Sonarr server is configured.`
+      );
+    }
+
+    return requestBody.animeAudio;
   }
 
   @PrimaryGeneratedColumn()
@@ -592,6 +640,9 @@ export class MediaRequest {
 
   @Column({ default: false })
   public ignoreQuota: boolean;
+
+  @Column({ type: 'varchar', nullable: true })
+  public animeAudio?: AnimeAudio | null;
 
   constructor(init?: Partial<MediaRequest>) {
     Object.assign(this, init);

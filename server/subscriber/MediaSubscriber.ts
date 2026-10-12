@@ -7,6 +7,8 @@ import Media from '@server/entity/Media';
 import { MediaRequest } from '@server/entity/MediaRequest';
 import Season from '@server/entity/Season';
 import SeasonRequest from '@server/entity/SeasonRequest';
+import { getRequestSeasonStatus, isDubTracked } from '@server/lib/animeAudio';
+import { getSettings } from '@server/lib/settings';
 import logger from '@server/logger';
 import { withNestedTransaction } from '@server/utils/nestedTransaction';
 import type {
@@ -64,6 +66,7 @@ export class MediaSubscriber implements EntitySubscriberInterface<Media> {
     // or deleted, set the related request to completed
     if (relatedRequests.length > 0) {
       const completedRequests: MediaRequest[] = [];
+      const dubTracked = isDubTracked(getSettings().plex.libraries);
 
       for (const request of relatedRequests) {
         let shouldComplete = false;
@@ -95,10 +98,14 @@ export class MediaSubscriber implements EntitySubscriberInterface<Media> {
               continue;
             }
 
-            const currentSeasonStatus =
-              matchingSeason[request.is4k ? 'status4k' : 'status'];
-            const previousSeasonStatus =
-              matchingOldSeason?.[request.is4k ? 'status4k' : 'status'];
+            const currentSeasonStatus = getRequestSeasonStatus(
+              matchingSeason,
+              request,
+              dubTracked
+            );
+            const previousSeasonStatus = matchingOldSeason
+              ? getRequestSeasonStatus(matchingOldSeason, request, dubTracked)
+              : undefined;
 
             const hasStatusChanged =
               currentSeasonStatus !== previousSeasonStatus;
@@ -212,24 +219,22 @@ export class MediaSubscriber implements EntitySubscriberInterface<Media> {
       MediaStatus.DELETED,
     ];
 
-    const seasonStatusCheck = (is4k: boolean) => {
+    const seasonStatusCheck = (key: 'status' | 'status4k' | 'statusDub') => {
       return event.entity?.seasons?.some((season: Season, index: number) => {
         const previousSeason = event.databaseEntity.seasons[index];
 
-        return (
-          season[is4k ? 'status4k' : 'status'] !==
-          previousSeason?.[is4k ? 'status4k' : 'status']
-        );
+        return season[key] !== previousSeason?.[key];
       });
     };
 
+    const statusChanged = (key: 'status' | 'status4k' | 'statusDub') =>
+      (event.entity?.[key] !== event.databaseEntity?.[key] ||
+        (event.entity?.mediaType === MediaType.TV && seasonStatusCheck(key))) &&
+      validStatuses.includes(event.entity?.[key]);
+
     try {
-      if (
-        (event.entity.status !== event.databaseEntity?.status ||
-          (event.entity.mediaType === MediaType.TV &&
-            seasonStatusCheck(false))) &&
-        validStatuses.includes(event.entity.status)
-      ) {
+      // Dub availability completes dub requests, which are non-4K
+      if (statusChanged('status') || statusChanged('statusDub')) {
         await withNestedTransaction(event.manager, async (manager) => {
           await this.updateRelatedMediaRequest(
             manager,
@@ -252,12 +257,7 @@ export class MediaSubscriber implements EntitySubscriberInterface<Media> {
     }
 
     try {
-      if (
-        (event.entity.status4k !== event.databaseEntity?.status4k ||
-          (event.entity.mediaType === MediaType.TV &&
-            seasonStatusCheck(true))) &&
-        validStatuses.includes(event.entity.status4k)
-      ) {
+      if (statusChanged('status4k')) {
         await withNestedTransaction(event.manager, async (manager) => {
           await this.updateRelatedMediaRequest(
             manager,

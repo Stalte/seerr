@@ -165,6 +165,10 @@ class WebPushAgent
           userName: payload.issue?.modifiedBy?.displayName,
         });
         break;
+      case Notification.ISSUE_MEDIA_RETRIED:
+        // Names who deleted it, which may not be the reporting user
+        message = payload.message ?? '';
+        break;
       default:
         return {
           notificationType: Notification[type],

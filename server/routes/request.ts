@@ -10,6 +10,7 @@ import Media from '@server/entity/Media';
 import {
   BlocklistedMediaError,
   DuplicateMediaRequestError,
+  InvalidAnimeAudioError,
   MediaRequest,
   NoSeasonsAvailableError,
   QuotaRestrictedError,
@@ -21,6 +22,7 @@ import type {
   MediaRequestBody,
   RequestResultsResponse,
 } from '@server/interfaces/api/requestInterfaces';
+import { coversDub, getTakenSeasons } from '@server/lib/animeAudio';
 import { Permission } from '@server/lib/permissions';
 import { getSettings } from '@server/lib/settings';
 import logger from '@server/logger';
@@ -334,6 +336,8 @@ requestRoutes.post<never, MediaRequest, MediaRequestBody>(
           return next({ status: 202, message: error.message });
         case BlocklistedMediaError:
           return next({ status: 403, message: error.message });
+        case InvalidAnimeAudioError:
+          return next({ status: 400, message: error.message });
         default:
           return next({ status: 500, message: error.message });
       }
@@ -577,36 +581,42 @@ requestRoutes.put<{ requestId: string }>(
                   relations: { requests: true },
                 });
 
-                // Get all requested seasons that are not part of this request we are editing
-                const existingSeasons = media.requests
-                  .filter(
+                // Get all requested seasons that are not part of this request we are editing,
+                // leaving out requests for the other anime audio version
+                const existingSeasons = getTakenSeasons(
+                  media.requests.filter(
                     (r) =>
                       r.is4k === request.is4k &&
                       r.id !== request.id &&
                       r.status !== MediaRequestStatus.DECLINED &&
                       r.status !== MediaRequestStatus.COMPLETED
-                  )
-                  .reduce((seasons, r) => {
-                    const combinedSeasons = r.seasons.map(
-                      (season) => season.seasonNumber
-                    );
-
-                    return [...seasons, ...combinedSeasons];
-                  }, [] as number[]);
+                  ),
+                  [],
+                  request.animeAudio
+                );
 
                 const currentSeasons = request.seasons.map(
                   (s) => s.seasonNumber
                 );
 
                 // Seasons the media already covers cannot be requested again, while
-                // the ones this request holds stay on it
-                const coveredSeasons = (media.seasons ?? [])
+                // the ones this request holds stay on it. A dub is covered by dub
+                // availability, which is only recorded for the non-4K tier.
+                const coverKey = request.is4k
+                  ? 'status4k'
+                  : request.animeAudio === 'dub'
+                    ? 'statusDub'
+                    : 'status';
+                const coveredSeasons = (
+                  request.animeAudio === 'both' ||
+                  (request.is4k && coversDub(request.animeAudio))
+                    ? []
+                    : (media.seasons ?? [])
+                )
                   .filter(
                     (season) =>
-                      season[request.is4k ? 'status4k' : 'status'] !==
-                        MediaStatus.UNKNOWN &&
-                      season[request.is4k ? 'status4k' : 'status'] !==
-                        MediaStatus.DELETED
+                      season[coverKey] !== MediaStatus.UNKNOWN &&
+                      season[coverKey] !== MediaStatus.DELETED
                   )
                   .map((season) => season.seasonNumber)
                   .filter((sn) => !currentSeasons.includes(sn));

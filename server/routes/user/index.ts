@@ -18,6 +18,7 @@ import type {
   UserWatchDataResponse,
 } from '@server/interfaces/api/userInterfaces';
 import { Permission, hasPermission } from '@server/lib/permissions';
+import { getPlexSharedUsers } from '@server/lib/plexServers';
 import { getSettings } from '@server/lib/settings';
 import logger from '@server/logger';
 import { isAuthenticated } from '@server/middleware/auth';
@@ -666,14 +667,12 @@ router.post(
         select: { id: true, plexToken: true },
         where: { id: 1 },
       });
-      const mainPlexTv = new PlexTvAPI(mainUser.plexToken ?? '');
 
-      const plexUsersResponse = await mainPlexTv.getUsers();
+      // Includes users of the secondary Plex server, when one is configured
+      const plexUsers = await getPlexSharedUsers(mainUser.plexToken ?? '');
       const createdUsers: User[] = [];
       let refreshedUsers = 0;
-      for (const rawUser of plexUsersResponse.MediaContainer.User) {
-        const account = rawUser.$;
-
+      for (const { user: account, hasAccess } of plexUsers) {
         if (account.email) {
           const user = await userRepository
             .createQueryBuilder('user')
@@ -697,7 +696,7 @@ router.post(
             await userRepository.save(user);
             refreshedUsers += 1;
           } else if (!body || body.plexIds.includes(account.id)) {
-            if (await mainPlexTv.checkUserAccess(parseInt(account.id))) {
+            if (hasAccess) {
               const newUser = new User({
                 plexUsername: account.username,
                 email: account.email,

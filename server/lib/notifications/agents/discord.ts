@@ -179,6 +179,7 @@ class DiscordAgent
           color = EmbedColors.RED;
           break;
         case Notification.ISSUE_COMMENT:
+        case Notification.ISSUE_MEDIA_RETRIED:
           color = EmbedColors.ORANGE;
           break;
         case Notification.ISSUE_RESOLVED:

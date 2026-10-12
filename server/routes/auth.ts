@@ -7,6 +7,7 @@ import { getRepository } from '@server/datasource';
 import { User } from '@server/entity/User';
 import { startJobs } from '@server/job/schedule';
 import { Permission } from '@server/lib/permissions';
+import { hasSecondaryPlexServerAccess } from '@server/lib/plexServers';
 import { getSettings } from '@server/lib/settings';
 import logger from '@server/logger';
 import { isAuthenticated } from '@server/middleware/auth';
@@ -139,7 +140,8 @@ authRoutes.post('/plex', async (req, res, next) => {
       if (
         account.id === mainUser.plexId ||
         (account.email === mainUser.email && !mainUser.plexId) ||
-        (await mainPlexTv.checkUserAccess(account.id))
+        (await mainPlexTv.checkUserAccess(account.id)) ||
+        (await hasSecondaryPlexServerAccess(account.id))
       ) {
         if (user) {
           if (!user.plexId) {

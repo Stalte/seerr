@@ -19,6 +19,11 @@ sonarrRoutes.post('/', async (req, res) => {
   const lastItem = settings.sonarr[settings.sonarr.length - 1];
   newSonarr.id = lastItem ? lastItem.id + 1 : 0;
 
+  // The dubs-only server only takes the dub side of anime requests
+  if (req.body.isAnimeDub) {
+    req.body.isDefault = false;
+  }
+
   // If we are setting this as the default, clear any previous defaults for the same type first
   // ex: if is4k is true, it will only remove defaults for other servers that have is4k set to true
   // and are the default
@@ -84,6 +89,11 @@ sonarrRoutes.put<{ id: string }>('/:id', async (req, res) => {
     return res
       .status(404)
       .json({ status: '404', message: 'Settings instance not found' });
+  }
+
+  // The dubs-only server only takes the dub side of anime requests
+  if (req.body.isAnimeDub) {
+    req.body.isDefault = false;
   }
 
   // If we are setting this as the default, clear any previous defaults for the same type first

@@ -20,6 +20,9 @@ export interface Library {
   enabled: boolean;
   type: 'show' | 'movie';
   lastScan?: number;
+  // Marks a Plex show library as holding one version of anime. A 'dub'
+  // library only records English dub availability, never the original's.
+  animeAudio?: 'sub' | 'dub';
 }
 
 export interface Region {
@@ -42,6 +45,18 @@ export interface PlexSettings {
   useSsl?: boolean;
   libraries: Library[];
   webAppUrl?: string;
+}
+
+/**
+ * A second Plex server, owned by a different Plex account, whose users may
+ * also sign in. It shares the main server's media, so it is never scanned.
+ */
+export interface PlexSecondarySettings {
+  name: string;
+  machineId?: string;
+  ownerPlexId?: number;
+  ownerUsername?: string;
+  ownerToken?: string;
 }
 
 export interface JellyfinSettings {
@@ -101,6 +116,9 @@ export interface SonarrSettings extends DVRSettings {
   animeTags?: number[];
   enableSeasonFolders: boolean;
   monitorNewItems: 'all' | 'none';
+  // Receives only the English-dub side of anime requests and is never the
+  // default server or scanned for availability
+  isAnimeDub?: boolean;
 }
 
 interface Quota {
@@ -200,6 +218,8 @@ interface FullPublicSettings extends PublicSettings {
   mediaServerLogin: boolean;
   movie4kEnabled: boolean;
   series4kEnabled: boolean;
+  animeDubEnabled: boolean;
+  animeDub4kEnabled: boolean;
   discoverRegion: string;
   streamingRegion: string;
   originalLanguage: string;
@@ -381,6 +401,7 @@ export interface AllSettings {
   vapidPrivate: string;
   main: MainSettings;
   plex: PlexSettings;
+  plexSecondary: PlexSecondarySettings;
   jellyfin: JellyfinSettings;
   tautulli: TautulliSettings;
   radarr: RadarrSettings[];
@@ -443,6 +464,9 @@ class Settings {
         port: 32400,
         useSsl: false,
         libraries: [],
+      },
+      plexSecondary: {
+        name: '',
       },
       jellyfin: {
         name: '',
@@ -659,6 +683,14 @@ class Settings {
     this.data.plex = mergeSettings(this.data.plex, data);
   }
 
+  get plexSecondary(): PlexSecondarySettings {
+    return this.data.plexSecondary;
+  }
+
+  set plexSecondary(data: PlexSecondarySettings) {
+    this.data.plexSecondary = data;
+  }
+
   get jellyfin(): JellyfinSettings {
     return this.data.jellyfin;
   }
@@ -727,6 +759,12 @@ class Settings {
       ),
       series4kEnabled: this.data.sonarr.some(
         (sonarr) => sonarr.is4k && sonarr.isDefault
+      ),
+      animeDubEnabled: this.data.sonarr.some(
+        (sonarr) => sonarr.isAnimeDub && !sonarr.is4k
+      ),
+      animeDub4kEnabled: this.data.sonarr.some(
+        (sonarr) => sonarr.isAnimeDub && sonarr.is4k
       ),
       discoverRegion: this.data.main.discoverRegion,
       streamingRegion: this.data.main.streamingRegion,

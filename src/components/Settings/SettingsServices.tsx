@@ -33,6 +33,7 @@ const messages = defineMessages('components.Settings', {
   default: 'Default',
   default4k: 'Default 4K',
   is4k: '4K',
+  animeDub: 'Anime Dubs',
   address: 'Address',
   activeProfile: 'Active Profile',
   addradarr: 'Add Radarr Server',
@@ -56,6 +57,7 @@ interface ServerInstanceProps {
   name: string;
   isDefault?: boolean;
   is4k?: boolean;
+  isAnimeDub?: boolean;
   hostname: string;
   port: number;
   isSSL?: boolean;
@@ -100,6 +102,7 @@ const ServerInstance = ({
   profileName,
   is4k = false,
   isDefault = false,
+  isAnimeDub = false,
   isSSL = false,
   isSonarr = false,
   externalUrl,
@@ -136,6 +139,11 @@ const ServerInstance = ({
             {!isDefault && is4k && (
               <Badge badgeType="warning">
                 {intl.formatMessage(messages.is4k)}
+              </Badge>
+            )}
+            {isAnimeDub && (
+              <Badge badgeType="primary">
+                {intl.formatMessage(messages.animeDub)}
               </Badge>
             )}
             {isSSL && (
@@ -447,7 +455,9 @@ const SettingsServices = () => {
                   })}
                 />
               ) : (
-                sonarrData.some((sonarr) => sonarr.is4k) &&
+                sonarrData.some(
+                  (sonarr) => sonarr.is4k && !sonarr.isAnimeDub
+                ) &&
                 !sonarrData.some(
                   (sonarr) => sonarr.isDefault && sonarr.is4k
                 ) && (
@@ -471,6 +481,7 @@ const SettingsServices = () => {
                   isSonarr
                   isDefault={sonarr.isDefault}
                   is4k={sonarr.is4k}
+                  isAnimeDub={sonarr.isAnimeDub}
                   externalUrl={sonarr.externalUrl}
                   onEdit={() => setEditSonarrModal({ open: true, sonarr })}
                   onDelete={() =>

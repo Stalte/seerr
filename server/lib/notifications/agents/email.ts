@@ -57,6 +57,8 @@ const messages = defineMessages('notifications.agents.email', {
     'The {issueType} for the {mediaType} {subject} was marked as resolved by {userName}!',
   issueReopened:
     'The {issueType} for the {mediaType} {subject} was reopened by {userName}.',
+  issueMediaRetried:
+    'The media for the {issueType} for the {mediaType} {subject} was deleted and a new search started:',
 });
 
 class EmailAgent
@@ -249,6 +251,13 @@ class EmailAgent
           body = intl.formatMessage(messages.issueReopened, {
             issueType,
             userName: payload.issue.modifiedBy?.displayName,
+            mediaType,
+            subject: payload.subject,
+          });
+          break;
+        case Notification.ISSUE_MEDIA_RETRIED:
+          body = intl.formatMessage(messages.issueMediaRetried, {
+            issueType,
             mediaType,
             subject: payload.subject,
           });

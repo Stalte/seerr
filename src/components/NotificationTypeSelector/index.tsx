@@ -61,6 +61,11 @@ const messages = defineMessages('components.NotificationTypeSelector', {
     'Get notified when issues you reported are reopened.',
   adminissuereopenedDescription:
     'Get notified when issues are reopened by other users.',
+  issuemediaretried: 'Media Deleted and Retried',
+  issuemediaretriedDescription:
+    'Send notifications when a user deletes the media of an issue and a new search starts.',
+  adminissuemediaretriedDescription:
+    'Get notified when other users delete the media of an issue and a new search starts.',
   mediaautorequested: 'Request Automatically Submitted',
   mediaautorequestedDescription:
     'Get notified when new media requests are automatically submitted for items on Your Watchlist.',
@@ -106,6 +111,7 @@ export enum Notification {
   ISSUE_RESOLVED = 1024,
   ISSUE_REOPENED = 2048,
   MEDIA_AUTO_REQUESTED = 4096,
+  ISSUE_MEDIA_RETRIED = 8192,
 }
 
 export const ALL_NOTIFICATIONS = Object.values(Notification)
@@ -354,6 +360,19 @@ const NotificationTypeSelector = ({
           }),
         hasNotifyUser:
           !user || hasPermission(Permission.MANAGE_ISSUES) ? false : true,
+      },
+      {
+        id: 'issue-media-retried',
+        name: intl.formatMessage(messages.issuemediaretried),
+        description: intl.formatMessage(
+          user
+            ? messages.adminissuemediaretriedDescription
+            : messages.issuemediaretriedDescription
+        ),
+        value: Notification.ISSUE_MEDIA_RETRIED,
+        // Only admins are told; the user who deleted sees it on the issue
+        hidden: user && !hasPermission(Permission.MANAGE_ISSUES),
+        hasNotifyUser: false,
       },
     ];
 

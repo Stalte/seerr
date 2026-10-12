@@ -140,6 +140,10 @@ class Media {
   @Index()
   public status4k: MediaStatus;
 
+  // English dub availability of anime, from Plex libraries marked as dubbed
+  @Column({ type: 'int', default: MediaStatus.UNKNOWN })
+  public statusDub: MediaStatus;
+
   @OneToMany(() => MediaRequest, (request) => request.media, {
     cascade: ['insert', 'remove'],
   })

@@ -3,6 +3,7 @@ import blocklistedTagsProcessor from '@server/job/blocklistedTagsProcessor';
 import availabilitySync from '@server/lib/availabilitySync';
 import downloadTracker from '@server/lib/downloadtracker';
 import ImageProxy from '@server/lib/imageproxy';
+import { issueRetryTracker } from '@server/lib/issueRetry';
 import refreshToken from '@server/lib/refreshToken';
 import {
   jellyfinFullScanner,
@@ -206,6 +207,7 @@ export const startJobs = (): void => {
         label: 'Jobs',
       });
       downloadTracker.updateDownloads();
+      issueRetryTracker.update();
     }),
   });
 

@@ -67,6 +67,9 @@ const messages = defineMessages('components.Settings.SonarrModal', {
   loadingTags: 'Loading tags…',
   testFirstTags: 'Test connection to load tags',
   syncEnabled: 'Enable Scan',
+  animeDub: 'Anime Dubs Only',
+  animeDubHelp:
+    'Only receives the English dub side of anime requests. Users choose between original language with subtitles, English dub, or both when they request anime.',
   externalUrl: 'External URL',
   enableSearch: 'Enable Automatic Search',
   tagRequests: 'Tag Requests',
@@ -256,6 +259,7 @@ const SonarrModal = ({ onClose, sonarr, onSave }: SonarrModalProps) => {
           animeTags: sonarr?.animeTags ?? [],
           isDefault: sonarr?.isDefault ?? false,
           is4k: sonarr?.is4k ?? false,
+          isAnimeDub: sonarr?.isAnimeDub ?? false,
           enableSeasonFolders: sonarr?.enableSeasonFolders ?? false,
           externalUrl: sonarr?.externalUrl,
           syncEnabled: sonarr?.syncEnabled ?? false,
@@ -299,7 +303,8 @@ const SonarrModal = ({ onClose, sonarr, onSave }: SonarrModalProps) => {
               tags: values.tags,
               animeTags: values.animeTags,
               is4k: values.is4k,
-              isDefault: values.isDefault,
+              isDefault: values.isAnimeDub ? false : values.isDefault,
+              isAnimeDub: values.isAnimeDub,
               enableSeasonFolders: values.enableSeasonFolders,
               externalUrl: values.externalUrl,
               syncEnabled: values.syncEnabled,
@@ -393,7 +398,12 @@ const SonarrModal = ({ onClose, sonarr, onSave }: SonarrModalProps) => {
                     )}
                   </label>
                   <div className="form-input-area">
-                    <Field type="checkbox" id="isDefault" name="isDefault" />
+                    <Field
+                      type="checkbox"
+                      id="isDefault"
+                      name="isDefault"
+                      disabled={values.isAnimeDub}
+                    />
                   </div>
                 </div>
                 <div className="form-row">
@@ -405,6 +415,27 @@ const SonarrModal = ({ onClose, sonarr, onSave }: SonarrModalProps) => {
                   </label>
                   <div className="form-input-area">
                     <Field type="checkbox" id="is4k" name="is4k" />
+                  </div>
+                </div>
+                <div className="form-row">
+                  <label htmlFor="isAnimeDub" className="checkbox-label">
+                    {intl.formatMessage(messages.animeDub)}
+                    <span className="label-tip">
+                      {intl.formatMessage(messages.animeDubHelp)}
+                    </span>
+                  </label>
+                  <div className="form-input-area">
+                    <Field
+                      type="checkbox"
+                      id="isAnimeDub"
+                      name="isAnimeDub"
+                      onChange={() => {
+                        if (!values.isAnimeDub) {
+                          setFieldValue('isDefault', false);
+                        }
+                        setFieldValue('isAnimeDub', !values.isAnimeDub);
+                      }}
+                    />
                   </div>
                 </div>
                 <div className="form-row">

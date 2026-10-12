@@ -6,6 +6,7 @@ import Modal from '@app/components/Common/Modal';
 import PageTitle from '@app/components/Common/PageTitle';
 import IssueComment from '@app/components/IssueDetails/IssueComment';
 import IssueDescription from '@app/components/IssueDetails/IssueDescription';
+import IssueRetry from '@app/components/IssueDetails/IssueRetry';
 import { issueOptions } from '@app/components/IssueModal/constants';
 import useDeepLinks from '@app/hooks/useDeepLinks';
 import useSettings from '@app/hooks/useSettings';
@@ -317,6 +318,18 @@ const IssueDetails = () => {
               editFirstComment(newMessage);
             }}
             onDelete={() => setShowDeleteModal(true)}
+          />
+          <IssueRetry
+            issue={issueData}
+            canRetry={
+              // Reporting users choose this in the report form; admins can
+              // still do it here. Only a movie or a single episode.
+              (issueData.media.mediaType === MediaType.MOVIE ||
+                (issueData.problemSeason > 0 &&
+                  issueData.problemEpisode > 0)) &&
+              hasPermission(Permission.MANAGE_ISSUES)
+            }
+            onUpdate={revalidateIssue}
           />
           <div className="mt-8 lg:hidden">
             <div className="media-facts">

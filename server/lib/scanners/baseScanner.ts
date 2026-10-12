@@ -272,6 +272,75 @@ class BaseScanner<T> {
    * Note: If 4k is not enable, ProcessableSeasons should combine their episode counts
    * into the normal episodes properties and avoid using the 4k properties.
    */
+  /**
+   * Records which seasons of an anime exist in a Plex library holding the
+   * English dub. Only the dub statuses change, so a dubbed copy never makes
+   * the original-language version look available.
+   */
+  protected async processDubShow(
+    tmdbId: number,
+    tvdbId: number | undefined,
+    seasons: ProcessableSeason[],
+    { title = 'Unknown Title' }: ProcessOptions = {}
+  ): Promise<void> {
+    const mediaRepository = getRepository(Media);
+
+    await this.asyncLock.dispatch(tmdbId, async () => {
+      const existing = await this.getExisting(tmdbId, MediaType.TV);
+      const media =
+        existing ??
+        new Media({ mediaType: MediaType.TV, tmdbId, tvdbId, seasons: [] });
+
+      const dubStatus = (season: ProcessableSeason): MediaStatus =>
+        season.totalEpisodes > 0 && season.episodes >= season.totalEpisodes
+          ? MediaStatus.AVAILABLE
+          : season.episodes > 0
+            ? MediaStatus.PARTIALLY_AVAILABLE
+            : MediaStatus.UNKNOWN;
+
+      for (const season of seasons) {
+        const existingSeason = media.seasons.find(
+          (es) => es.seasonNumber === season.seasonNumber
+        );
+
+        if (existingSeason) {
+          existingSeason.statusDub = dubStatus(season);
+        } else {
+          media.seasons.push(
+            new Season({
+              seasonNumber: season.seasonNumber,
+              statusDub: dubStatus(season),
+            })
+          );
+        }
+      }
+
+      const seasonsForRollup = media.seasons.filter(
+        (s) =>
+          s.seasonNumber !== 0 &&
+          (seasons.find((season) => season.seasonNumber === s.seasonNumber)
+            ?.totalEpisodes ?? 0) > 0
+      );
+
+      media.statusDub =
+        seasonsForRollup.length > 0 &&
+        seasonsForRollup.every((s) => s.statusDub === MediaStatus.AVAILABLE)
+          ? MediaStatus.AVAILABLE
+          : media.seasons.some(
+                (s) =>
+                  s.statusDub === MediaStatus.AVAILABLE ||
+                  s.statusDub === MediaStatus.PARTIALLY_AVAILABLE
+              )
+            ? MediaStatus.PARTIALLY_AVAILABLE
+            : MediaStatus.UNKNOWN;
+
+      await mediaRepository.save(media);
+      this.log(
+        `${existing ? 'Updating' : 'Saving'} English dub availability: ${title}`
+      );
+    });
+  }
+
   protected async processShow(
     tmdbId: number,
     tvdbId: number | undefined,

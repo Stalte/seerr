@@ -16,6 +16,13 @@ import type { MediaRequest } from '@server/entity/MediaRequest';
 import type SeasonRequest from '@server/entity/SeasonRequest';
 import type { NonFunctionProperties } from '@server/interfaces/api/common';
 import type { QuotaResponse } from '@server/interfaces/api/userInterfaces';
+import type { AnimeAudio } from '@server/lib/animeAudio';
+import {
+  ANIME_AUDIO_VALUES,
+  coversDub,
+  coversSub,
+  getTakenSeasons,
+} from '@server/lib/animeAudio';
 import { Permission } from '@server/lib/permissions';
 import type { TvDetails } from '@server/models/Tv';
 import axios from 'axios';
@@ -50,7 +57,18 @@ const messages = defineMessages('components.RequestModal', {
   autoapproval: 'Automatic Approval',
   requesterror: 'Something went wrong while submitting the request.',
   pendingapproval: 'Your request is pending approval.',
+  animeAudioQuestion: 'Which version would you like?',
+  animeAudioSub: 'Original Language with Subtitles',
+  animeAudioDub: 'English Dub',
+  animeAudioBoth: 'Both',
+  selectAnimeAudio: 'Choose a Version',
 });
+
+const animeAudioMessages = {
+  sub: messages.animeAudioSub,
+  dub: messages.animeAudioDub,
+  both: messages.animeAudioBoth,
+};
 
 interface RequestModalProps extends React.HTMLAttributes<HTMLDivElement> {
   tmdbId: number;
@@ -88,6 +106,24 @@ const TvRequestModal = ({
     show: true,
   });
   const [tvdbId, setTvdbId] = useState<number | undefined>(undefined);
+  const [animeAudio, setAnimeAudio] = useState<AnimeAudio | undefined>(
+    editRequest?.animeAudio ?? undefined
+  );
+  const isAnime = data?.keywords.some(
+    (keyword) => keyword.id === ANIME_KEYWORD_ID
+  );
+  // Asked only when a dubs-only Sonarr server can take the dub
+  const showAnimeAudio =
+    !!isAnime &&
+    (is4k
+      ? settings.currentSettings.animeDub4kEnabled
+      : settings.currentSettings.animeDubEnabled);
+  // Seasons are shown for the original-language version until a choice is made
+  const viewAudio: AnimeAudio | undefined = showAnimeAudio
+    ? (animeAudio ?? 'sub')
+    : undefined;
+  const statusKey =
+    viewAudio === 'dub' ? 'statusDub' : is4k ? 'status4k' : 'status';
   const { data: quota } = useSWR<QuotaResponse>(
     user &&
       (!requestOverrides?.user?.id || hasPermission(Permission.MANAGE_USERS))
@@ -200,6 +236,7 @@ const TvRequestModal = ({
         mediaType: 'tv',
         is4k,
         ignoreQuota: requestOverrides?.ignoreQuota,
+        animeAudio: showAnimeAudio ? animeAudio : undefined,
         seasons: settings.currentSettings.partialRequestsEnabled
           ? selectedSeasons.sort((a, b) => a - b)
           : getAllSeasons().filter(
@@ -245,35 +282,58 @@ const TvRequestModal = ({
     return allSeasons.map((season) => season.seasonNumber);
   };
 
-  const getAllRequestedSeasons = (): number[] => {
-    const requestedSeasons = (data?.mediaInfo?.requests ?? [])
-      .filter(
-        (request) =>
-          request.is4k === is4k &&
-          request.status !== MediaRequestStatus.DECLINED &&
-          request.status !== MediaRequestStatus.COMPLETED
-      )
-      .reduce((requestedSeasons, request) => {
-        return [
-          ...requestedSeasons,
-          ...request.seasons
-            .filter((season) => !editingSeasons.includes(season.seasonNumber))
-            .map((sr) => sr.seasonNumber),
-        ];
-      }, [] as number[]);
+  const activeRequests = (data?.mediaInfo?.requests ?? []).filter(
+    (request) =>
+      request.is4k === is4k &&
+      request.status !== MediaRequestStatus.DECLINED &&
+      request.status !== MediaRequestStatus.COMPLETED
+  );
 
+  const getAllRequestedSeasons = (audio = viewAudio): number[] => {
     const availableSeasons = (data?.mediaInfo?.seasons ?? [])
       .filter(
         (season) =>
-          (season[is4k ? 'status4k' : 'status'] === MediaStatus.AVAILABLE ||
-            season[is4k ? 'status4k' : 'status'] ===
-              MediaStatus.PARTIALLY_AVAILABLE ||
-            season[is4k ? 'status4k' : 'status'] === MediaStatus.PROCESSING) &&
-          !requestedSeasons.includes(season.seasonNumber)
+          season[is4k ? 'status4k' : 'status'] === MediaStatus.AVAILABLE ||
+          season[is4k ? 'status4k' : 'status'] ===
+            MediaStatus.PARTIALLY_AVAILABLE ||
+          season[is4k ? 'status4k' : 'status'] === MediaStatus.PROCESSING
       )
       .map((season) => season.seasonNumber);
 
-    return [...requestedSeasons, ...availableSeasons];
+    // Dub availability is only recorded for the non-4K tier
+    const availableDubSeasons = is4k
+      ? []
+      : (data?.mediaInfo?.seasons ?? [])
+          .filter(
+            (season) =>
+              season.statusDub === MediaStatus.AVAILABLE ||
+              season.statusDub === MediaStatus.PARTIALLY_AVAILABLE
+          )
+          .map((season) => season.seasonNumber);
+
+    return [
+      ...new Set(
+        getTakenSeasons(
+          activeRequests.map((request) => ({
+            animeAudio: request.animeAudio,
+            seasons: request.seasons.filter(
+              (season) => !editingSeasons.includes(season.seasonNumber)
+            ),
+          })),
+          availableSeasons,
+          audio,
+          availableDubSeasons
+        )
+      ),
+    ];
+  };
+
+  const selectAnimeAudio = (audio: AnimeAudio): void => {
+    const taken = getAllRequestedSeasons(audio);
+    setAnimeAudio(audio);
+    setSelectedSeasons((seasons) =>
+      seasons.filter((sn) => !taken.includes(sn))
+    );
   };
 
   const isSelectedSeason = (seasonNumber: number): boolean =>
@@ -342,34 +402,29 @@ const TvRequestModal = ({
   const getSeasonRequest = (
     seasonNumber: number
   ): SeasonRequest | undefined => {
+    // In the dub and both views, only requests that include the dub count,
+    // and for both the season must also be covered in the original language
+    if (
+      viewAudio === 'both' &&
+      !getAllRequestedSeasons().includes(seasonNumber)
+    ) {
+      return undefined;
+    }
+
+    const covers = coversDub(viewAudio) ? coversDub : coversSub;
     let seasonRequest: SeasonRequest | undefined;
 
-    if (
-      data?.mediaInfo &&
-      (data.mediaInfo.requests || []).filter(
-        (request) =>
-          request.is4k === is4k &&
-          request.status !== MediaRequestStatus.DECLINED &&
-          request.status !== MediaRequestStatus.COMPLETED
-      ).length > 0
-    ) {
-      data.mediaInfo.requests
-        .filter(
-          (request) =>
-            request.is4k === is4k &&
-            request.status !== MediaRequestStatus.DECLINED &&
-            request.status !== MediaRequestStatus.COMPLETED
-        )
-        .forEach((request) => {
-          if (!seasonRequest) {
-            seasonRequest = request.seasons.find(
-              (season) =>
-                season.seasonNumber === seasonNumber &&
-                season.status !== MediaRequestStatus.COMPLETED
-            );
-          }
-        });
-    }
+    activeRequests
+      .filter((request) => covers(request.animeAudio))
+      .forEach((request) => {
+        if (!seasonRequest) {
+          seasonRequest = request.seasons.find(
+            (season) =>
+              season.seasonNumber === seasonNumber &&
+              season.status !== MediaRequestStatus.COMPLETED
+          );
+        }
+      });
 
     return seasonRequest;
   };
@@ -418,32 +473,38 @@ const TvRequestModal = ({
             : hasPermission(Permission.MANAGE_REQUESTS)
               ? intl.formatMessage(messages.approve)
               : intl.formatMessage(messages.edit)
-          : unrequestedSeasons.length === 0
-            ? intl.formatMessage(messages.alreadyrequested)
-            : !settings.currentSettings.partialRequestsEnabled
-              ? intl.formatMessage(
-                  is4k ? globalMessages.request4k : globalMessages.request
-                )
-              : selectedSeasons.length === 0
-                ? intl.formatMessage(messages.selectseason)
-                : intl.formatMessage(
-                    is4k ? messages.requestseasons4k : messages.requestseasons,
-                    {
-                      seasonCount: selectedSeasons.length,
-                    }
+          : showAnimeAudio && !animeAudio
+            ? intl.formatMessage(messages.selectAnimeAudio)
+            : unrequestedSeasons.length === 0
+              ? intl.formatMessage(messages.alreadyrequested)
+              : !settings.currentSettings.partialRequestsEnabled
+                ? intl.formatMessage(
+                    is4k ? globalMessages.request4k : globalMessages.request
                   )
+                : selectedSeasons.length === 0
+                  ? intl.formatMessage(messages.selectseason)
+                  : intl.formatMessage(
+                      is4k
+                        ? messages.requestseasons4k
+                        : messages.requestseasons,
+                      {
+                        seasonCount: selectedSeasons.length,
+                      }
+                    )
       }
       okDisabled={
         editRequest
           ? false
-          : !settings.currentSettings.partialRequestsEnabled &&
-              quota?.tv.limit &&
-              unrequestedSeasons.length > quota.tv.limit &&
-              !requestOverrides?.ignoreQuota
+          : showAnimeAudio && !animeAudio
             ? true
-            : unrequestedSeasons.length === 0 ||
-              (settings.currentSettings.partialRequestsEnabled &&
-                selectedSeasons.length === 0)
+            : !settings.currentSettings.partialRequestsEnabled &&
+                quota?.tv.limit &&
+                unrequestedSeasons.length > quota.tv.limit &&
+                !requestOverrides?.ignoreQuota
+              ? true
+              : unrequestedSeasons.length === 0 ||
+                (settings.currentSettings.partialRequestsEnabled &&
+                  selectedSeasons.length === 0)
       }
       okButtonType={
         editRequest
@@ -516,6 +577,35 @@ const TvRequestModal = ({
           }
         />
       )}
+      {showAnimeAudio && (
+        <div className="mb-4 mt-2">
+          <div className="mb-2 text-sm font-medium text-gray-200">
+            {intl.formatMessage(messages.animeAudioQuestion)}
+          </div>
+          <div
+            className="grid grid-cols-1 gap-2 sm:grid-cols-3"
+            role="radiogroup"
+          >
+            {ANIME_AUDIO_VALUES.map((option) => (
+              <button
+                key={`anime-audio-${option}`}
+                type="button"
+                role="radio"
+                aria-checked={animeAudio === option}
+                disabled={!!editRequest}
+                onClick={() => selectAnimeAudio(option)}
+                className={`rounded-md border px-3 py-2 text-sm font-medium transition duration-150 ease-in-out focus:outline-none focus:ring focus:ring-indigo-500 disabled:cursor-default ${
+                  animeAudio === option
+                    ? 'border-indigo-500 bg-indigo-600 text-white'
+                    : 'border-gray-600 bg-gray-800 text-gray-200 hover:bg-gray-700 disabled:opacity-50 disabled:hover:bg-gray-800'
+                }`}
+              >
+                {intl.formatMessage(animeAudioMessages[option])}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="flex flex-col">
         <div className="-mx-4 sm:mx-0">
           <div className="inline-block min-w-full py-2 align-middle">
@@ -584,14 +674,17 @@ const TvRequestModal = ({
                       const seasonRequest = getSeasonRequest(
                         season.seasonNumber
                       );
-                      const mediaSeason = data?.mediaInfo?.seasons.find(
-                        (sn) =>
-                          sn.seasonNumber === season.seasonNumber &&
-                          sn[is4k ? 'status4k' : 'status'] !==
-                            MediaStatus.UNKNOWN &&
-                          sn[is4k ? 'status4k' : 'status'] !==
-                            MediaStatus.DELETED
-                      );
+                      // The dub view shows dub availability, which is only
+                      // recorded for non-4K, and both has no single status
+                      const mediaSeason =
+                        viewAudio === 'both' || (is4k && viewAudio === 'dub')
+                          ? undefined
+                          : data?.mediaInfo?.seasons.find(
+                              (sn) =>
+                                sn.seasonNumber === season.seasonNumber &&
+                                sn[statusKey] !== MediaStatus.UNKNOWN &&
+                                sn[statusKey] !== MediaStatus.DELETED
+                            );
                       return (
                         <tr key={`season-${season.id}`}>
                           <td
@@ -684,13 +777,13 @@ const TvRequestModal = ({
                             {((!mediaSeason &&
                               seasonRequest?.status ===
                                 MediaRequestStatus.APPROVED) ||
-                              mediaSeason?.[is4k ? 'status4k' : 'status'] ===
+                              mediaSeason?.[statusKey] ===
                                 MediaStatus.PROCESSING) && (
                               <Badge badgeType="primary">
                                 {intl.formatMessage(globalMessages.requested)}
                               </Badge>
                             )}
-                            {mediaSeason?.[is4k ? 'status4k' : 'status'] ===
+                            {mediaSeason?.[statusKey] ===
                               MediaStatus.PARTIALLY_AVAILABLE && (
                               <Badge badgeType="success">
                                 {intl.formatMessage(
@@ -698,7 +791,7 @@ const TvRequestModal = ({
                                 )}
                               </Badge>
                             )}
-                            {mediaSeason?.[is4k ? 'status4k' : 'status'] ===
+                            {mediaSeason?.[statusKey] ===
                               MediaStatus.AVAILABLE && (
                               <Badge badgeType="success">
                                 {intl.formatMessage(globalMessages.available)}
@@ -722,9 +815,7 @@ const TvRequestModal = ({
           type="tv"
           tmdbId={tmdbId}
           is4k={is4k}
-          isAnime={data?.keywords.some(
-            (keyword) => keyword.id === ANIME_KEYWORD_ID
-          )}
+          isAnime={isAnime}
           quota={quota}
           onChange={(overrides) => setRequestOverrides(overrides)}
           requestUser={editRequest?.requestedBy}
