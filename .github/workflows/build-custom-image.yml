@@ -2,7 +2,7 @@ name: Build custom image
 
 on:
   push:
-    branches: [claude/project-thread-xl2mvd]
+    branches: [develop]
   workflow_dispatch:
 
 permissions:
