@@ -33,6 +33,7 @@ import { isPgsql } from '@server/utils/dbType';
 import { initDemoData } from '@server/utils/demoMode';
 import { initializeDnsCache } from '@server/utils/dnsCache';
 import restartFlag from '@server/utils/restartFlag';
+import installTlsBlocklist from '@server/utils/tlsBlocklist';
 import '@server/utils/userAgent';
 import { getClientIp } from '@supercharge/request-ip';
 import { TypeormStore } from 'connect-typeorm/out';
@@ -51,6 +52,10 @@ import swaggerUi from 'swagger-ui-express';
 const API_SPEC_PATH = path.join(__dirname, '../seerr-api.yml');
 
 logger.info(`Starting Seerr version ${getAppVersion()}`);
+
+// Refuse certificate chains signed by the compromised eMudhra intermediate CAs
+// (CVE-2026-111943, CVE-2026-111944) before anything makes an outbound request.
+installTlsBlocklist();
 const dev = process.env.NODE_ENV !== 'production';
 const app = next({ dev });
 const handle = app.getRequestHandler();
