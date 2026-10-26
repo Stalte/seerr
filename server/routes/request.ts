@@ -118,6 +118,9 @@ requestRoutes.get<Record<string, unknown>, RequestResultsResponse>(
         case 'modified':
           sortFilter = 'request.updatedAt';
           break;
+        case 'added':
+          sortFilter = 'request.createdAt';
+          break;
         default:
           sortFilter = 'request.id';
       }
@@ -185,6 +188,7 @@ requestRoutes.get<Record<string, unknown>, RequestResultsResponse>(
 
       const [requests, requestCount] = await query
         .orderBy(sortFilter, sortDirection)
+        .addOrderBy('request.id', sortDirection)
         .take(pageSize)
         .skip(skip)
         .getManyAndCount();
