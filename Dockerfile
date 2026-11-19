@@ -42,11 +42,12 @@ ARG COMMIT_TAG
 ENV NODE_ENV=production
 ENV COMMIT_TAG=${COMMIT_TAG}
 
-# ca-certificates is pulled in at build time so the system trust store in the
-# image also drops the distrusted emSign roots (CVE-2026-111943,
-# CVE-2026-111944). Node uses its own bundled roots, so this covers the other
-# tools in the image.
-RUN apk add --no-cache tzdata ca-certificates
+# Alpine packages are upgraded at build time so the image picks up security
+# fixes published after the pinned base image. ca-certificates is pulled in so
+# the system trust store also drops the distrusted emSign roots
+# (CVE-2026-111943, CVE-2026-111944). Node uses its own bundled roots, so this
+# covers the other tools in the image.
+RUN apk upgrade --no-cache && apk add --no-cache tzdata ca-certificates
 
 USER node:node
 

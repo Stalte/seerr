@@ -211,7 +211,10 @@
     "overrides": {
       "@types/express-session": "1.18.2",
       "@types/react": "19.2.14",
-      "@types/react-dom": "19.2.3"
+      "@types/react-dom": "19.2.3",
+      "email-templates>nodemailer": "10.6.0",
+      "mailparser>nodemailer": "10.6.0",
+      "typeorm>glob": "^14.0.6"
     }
   },
   "scarfSettings": {
